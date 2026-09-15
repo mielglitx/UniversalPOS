@@ -1,0 +1,1202 @@
+<!--
+  Module Description: Standalone POS Register Primary HTML Markup
+  Defines the structure for the full-screen terminal login lock,
+  multi-tab administrative back-office portal, 3-column cashier register,
+  and modal dialogues. Includes configuration controls for customer calling
+  buzzers/pagers, dynamic checkout buzzer grids, and cloud backend
+  configuration generator triggers (Google Apps Script & Firebase).
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>Standalone POS Register</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <!-- Locally Bundled QR Code Generator Library -->
+  <script src="js/lib/qrcode.min.js"></script>
+  <!-- Locally Bundled Dexie.js IndexedDB Wrapper for Offline Storage -->
+  <script src="js/lib/dexie.min.js"></script>
+  <!-- Universal Offline QR Code Scanner Engine with CDN Fallback -->
+  <script src="js/lib/jsqr.min.js"></script>
+  <script>
+    if (typeof window.jsQR === "undefined") {
+      const fallbackScript = document.createElement("script");
+      fallbackScript.src = "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js";
+      document.head.appendChild(fallbackScript);
+    }
+  </script>
+  <!-- Robust 1D/2D Barcode Reader Engine (ZXing UMD Build) -->
+  <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+</head>
+<body data-theme="modern">
+
+  <!-- ============================================================= -->
+  <!-- 1. FULL-SCREEN LOGIN / LOCK SCREEN OVERLAY                    -->
+  <!-- ============================================================= -->
+  <div id="login-screen" class="login-screen">
+    <div class="login-card">
+      
+      <!-- Left Pane: Branding, Live Camera QR Scanner, and Hints -->
+      <div class="login-pane-left">
+        <div class="login-header">
+          <div class="login-logo-badge">🔒</div>
+          <h2>Terminal Locked</h2>
+          <p>Scan employee badge or enter numeric PIN</p>
+        </div>
+
+        <!-- Live Camera QR Scanner Viewport -->
+        <div class="camera-scanner-wrap" id="camera-scanner-wrap">
+          <video id="login-camera-preview" playsinline autoplay muted></video>
+          <div class="camera-scan-overlay">
+            <div class="camera-reticle"></div>
+            <div class="camera-laser"></div>
+          </div>
+          <div class="camera-status-pill" id="camera-status-pill">Point badge QR to camera</div>
+        </div>
+
+        <div class="login-footer-hint">
+          <span>Welcome back! Please enter your <b>PIN</b> to login.</span>
+        </div>
+      </div>
+
+      <!-- Right Pane: PIN Input Display and Touch Numpad Grid -->
+      <div class="login-pane-right">
+        <div class="login-input-wrap">
+          <input 
+            type="password" 
+            id="login-pin-input" 
+            maxlength="6" 
+            placeholder="••••" 
+            readonly 
+            autofocus 
+          />
+        </div>
+
+        <div id="login-error-msg" class="login-error"></div>
+
+        <!-- Touch Numpad for Touchscreen Terminals -->
+        <div class="numpad-grid">
+          <button type="button" class="btn-num" data-val="1">1</button>
+          <button type="button" class="btn-num" data-val="2">2</button>
+          <button type="button" class="btn-num" data-val="3">3</button>
+          <button type="button" class="btn-num" data-val="4">4</button>
+          <button type="button" class="btn-num" data-val="5">5</button>
+          <button type="button" class="btn-num" data-val="6">6</button>
+          <button type="button" class="btn-num" data-val="7">7</button>
+          <button type="button" class="btn-num" data-val="8">8</button>
+          <button type="button" class="btn-num" data-val="9">9</button>
+          <button type="button" class="btn-num btn-num-action btn-clear" id="btn-pin-clear">CLR</button>
+          <button type="button" class="btn-num" data-val="0">0</button>
+          <button type="button" class="btn-num btn-num-action btn-submit" id="btn-pin-submit">OK</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ============================================================= -->
+  <!-- 2. FULL-SCREEN ADMIN & BACK-OFFICE PORTAL                     -->
+  <!-- ============================================================= -->
+  <div id="admin-screen" class="admin-screen hidden">
+    <header class="admin-topbar">
+      <div class="admin-brand">
+        <span class="admin-title">⚙️ POS Administration Portal</span>
+        <span class="badge badge-admin">ADMINISTRATOR</span>
+      </div>
+      <div class="admin-nav-tabs">
+        <button type="button" class="btn-admin-tab active" data-tab="sales" id="tab-btn-sales">📊 Sales & Reports</button>
+        <button type="button" class="btn-admin-tab" data-tab="items" id="tab-btn-items">📦 Item Management</button>
+        <button type="button" class="btn-admin-tab" data-tab="inventory" id="tab-btn-inventory">📋 Monitoring Setup</button>
+        <button type="button" class="btn-admin-tab" data-tab="categories" id="tab-btn-categories">📂 Categories</button>
+        <button type="button" class="btn-admin-tab" data-tab="users" id="tab-btn-users">👥 Staff & Users</button>
+        <button type="button" class="btn-admin-tab" data-tab="store" id="tab-btn-store">🏪 Store Profile</button>
+        <button type="button" class="btn-admin-tab" data-tab="sync" id="tab-btn-sync">☁️ Cloud Sync</button>
+      </div>
+      <button type="button" class="btn-tool btn-danger-outline" id="btn-close-admin">✖ Exit to Register</button>
+    </header>
+
+    <main class="admin-content">
+      <!-- Tab 1: Sales & Reports -->
+      <section class="admin-tab-pane active" id="pane-sales">
+        <div class="admin-metrics-grid">
+          <div class="metric-card">
+            <span class="metric-title">Gross Sales</span>
+            <h3 id="stat-gross-sales">₱0.00</h3>
+          </div>
+          <div class="metric-card">
+            <span class="metric-title">Total Orders</span>
+            <h3 id="stat-total-orders">0</h3>
+          </div>
+          <div class="metric-card">
+            <span class="metric-title">VAT Collected (12%)</span>
+            <h3 id="stat-total-vat">₱0.00</h3>
+          </div>
+          <div class="metric-card">
+            <span class="metric-title">GCash vs Cash</span>
+            <h3 id="stat-payment-split">₱0 / ₱0</h3>
+          </div>
+        </div>
+
+        <div class="admin-table-controls">
+          <h3>Transaction History</h3>
+          <div class="admin-actions-group">
+            <button type="button" class="btn-tool btn-generate-report" id="btn-generate-sales-report">📄 Generate Report File</button>
+            <button type="button" class="btn-tool btn-print-report" id="btn-print-sales-report">🖨️ Print Sales Summary</button>
+          </div>
+        </div>
+
+        <div class="admin-table-wrap">
+          <table class="admin-data-table">
+            <thead>
+              <tr>
+                <th>Order #</th>
+                <th>Date & Time</th>
+                <th>Cashier / User</th>
+                <th>Payment</th>
+                <th class="text-right">Total Amount</th>
+                <th class="text-center">Action</th>
+              </tr>
+            </thead>
+            <tbody id="sales-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Tab 2: Item Catalog Management -->
+      <section class="admin-tab-pane" id="pane-items">
+        <div class="admin-table-controls">
+          <div>
+            <h3>Menu & Product Catalog</h3>
+            <p class="printer-hint-text">Configure pricing, barcodes, categories, and inventory monitoring flags.</p>
+          </div>
+          <button type="button" class="btn-pay btn-cash" id="btn-add-new-item">+ Add New Item</button>
+        </div>
+
+        <div class="admin-table-wrap">
+          <table class="admin-data-table">
+            <thead>
+              <tr>
+                <th>Picture</th>
+                <th>Item Name</th>
+                <th>Category</th>
+                <th>Type</th>
+                <th>Stock / Status</th>
+                <th class="text-right">Price</th>
+                <th class="text-center">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="items-admin-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Tab 3: Inventory Monitoring Setup -->
+      <section class="admin-tab-pane" id="pane-inventory">
+        <div class="admin-metrics-grid">
+          <div class="metric-card">
+            <span class="metric-title">Monitored Items</span>
+            <h3 id="stat-monitored-count">0</h3>
+          </div>
+          <div class="metric-card">
+            <span class="metric-title">Low Stock Alert</span>
+            <h3 id="stat-low-stock-count" style="color: #d97706;">0</h3>
+          </div>
+          <div class="metric-card">
+            <span class="metric-title">Out of Stock</span>
+            <h3 id="stat-out-stock-count" style="color: #dc2626;">0</h3>
+          </div>
+          <div class="metric-card">
+            <span class="metric-title">Unmonitored Items</span>
+            <h3 id="stat-unmonitored-count">0</h3>
+          </div>
+        </div>
+
+        <!-- Global Threshold Configuration Card -->
+        <div class="sync-settings-card sync-settings-card-pad">
+          <div class="form-row-2 form-row-center">
+            <div>
+              <h4 class="settings-subtitle">General Low-Stock Warning Threshold</h4>
+              <p class="printer-hint-text">Applies automatically to any monitored item without a custom threshold.</p>
+            </div>
+            <div class="threshold-action-wrap">
+              <input 
+                type="number" 
+                id="input-general-threshold" 
+                min="1" 
+                value="5" 
+                class="input-threshold-number"
+              />
+              <button type="button" class="btn-tool" id="btn-save-general-threshold">💾 Save Threshold</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="admin-table-controls">
+          <div>
+            <h3>Item Stock Adjustments & Monitoring Setup</h3>
+            <p class="printer-hint-text">Add or adjust quantities for monitored items and toggle availability for unmonitored goods.</p>
+          </div>
+          <div class="admin-actions-group">
+            <input 
+              type="text" 
+              id="input-inventory-search" 
+              placeholder="Filter items by name..." 
+              class="input-search-filter"
+            />
+          </div>
+        </div>
+
+        <div class="admin-table-wrap">
+          <table class="admin-data-table">
+            <thead>
+              <tr>
+                <th>Item Name</th>
+                <th>Category</th>
+                <th>Monitoring</th>
+                <th>Current Stock</th>
+                <th>Warning Threshold</th>
+                <th>Status</th>
+                <th class="text-center actions-col-wide">Stock & Availability Actions</th>
+              </tr>
+            </thead>
+            <tbody id="inventory-admin-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Tab 4: Category Management -->
+      <section class="admin-tab-pane" id="pane-categories">
+        <div class="admin-table-controls">
+          <h3>Product Categories</h3>
+          <button type="button" class="btn-pay btn-cash" id="btn-add-new-category">+ Add New Category</button>
+        </div>
+
+        <div class="admin-table-wrap">
+          <table class="admin-data-table">
+            <thead>
+              <tr>
+                <th>Icon</th>
+                <th>Category Name</th>
+                <th>Slug / ID</th>
+                <th>Display Order</th>
+                <th>Type</th>
+                <th class="text-center">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="categories-admin-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Tab 5: Staff & User Management -->
+      <section class="admin-tab-pane" id="pane-users">
+        <div class="admin-table-controls">
+          <div>
+            <h3>Staff Accounts & Security Roles</h3>
+            <p class="printer-hint-text">
+              Generate visual QR login badges for phone storage or physical employee cards.
+            </p>
+          </div>
+          <button type="button" class="btn-pay btn-cash" id="btn-add-new-user">+ Add User</button>
+        </div>
+
+        <div class="admin-table-wrap">
+          <table class="admin-data-table">
+            <thead>
+              <tr>
+                <th>User ID</th>
+                <th>Staff Name</th>
+                <th>Role / Title</th>
+                <th>PIN Code</th>
+                <th>Badge Token</th>
+                <th class="text-center">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="users-admin-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Tab 6: Store Settings & Profile -->
+      <section class="admin-tab-pane" id="pane-store">
+        <div class="admin-table-controls">
+          <div>
+            <h3>🏪 Store & Branch Settings</h3>
+            <p class="printer-hint-text">
+              These details appear prominently on customer official receipts and printed summaries.
+            </p>
+          </div>
+          <button type="button" class="btn-pay btn-cash" id="btn-save-store-settings">💾 Save Store Profile</button>
+        </div>
+
+        <div class="sync-settings-card">
+          <div class="form-row-2">
+            <div class="form-group">
+              <label for="store-name-input">Store Name (Top Header):</label>
+              <input type="text" id="store-name-input" placeholder="e.g., LOKALEX STORE" required />
+            </div>
+            <div class="form-group">
+              <label for="store-company-input">Registered Business / Company Name:</label>
+              <input type="text" id="store-company-input" placeholder="e.g., Lokalex Delivery Services" />
+            </div>
+          </div>
+
+          <div class="form-row-2">
+            <div class="form-group">
+              <label for="store-address-input">Branch Address / Location:</label>
+              <input type="text" id="store-address-input" placeholder="e.g., Camiling, Tarlac, Philippines" />
+            </div>
+            <div class="form-group">
+              <label for="store-contact-input">Contact / Telephone / Mobile Number:</label>
+              <input type="text" id="store-contact-input" placeholder="e.g., 0917-123-4567" />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="store-tagline-input">Customer Receipt Footer Tagline / Greeting:</label>
+            <input type="text" id="store-tagline-input" placeholder="e.g., Fast, Fresh & Local Delivery" />
+          </div>
+
+          <!-- Customer Calling Buzzer / Pager Configuration Controls -->
+          <div class="form-row-2 form-row-center">
+            <div class="form-group">
+              <label class="checkbox-label checkbox-label-strong">
+                <input type="checkbox" id="store-use-pager-checkbox" class="input-checkbox-lg" />
+                <span>Enable Customer Number Pager / Buzzer</span>
+              </label>
+              <small class="printer-hint-text">
+                Enables calling buzzer selection buttons during checkout and prints the pager number on receipts.
+              </small>
+            </div>
+            <div class="form-group hidden" id="store-pager-count-wrap">
+              <label for="store-pager-count-input">Total Pagers in Store (Buzzer Capacity):</label>
+              <input 
+                type="number" 
+                id="store-pager-count-input" 
+                min="1" 
+                max="99" 
+                value="24" 
+                placeholder="e.g., 24" 
+              />
+              <small class="printer-hint-text">Defines how many buzzer selection buttons appear during payment confirmation.</small>
+            </div>
+          </div>
+
+          <div class="form-row-2 form-row-top">
+            <div class="form-group">
+              <label for="store-logo-input">Store Logo (Monochrome Receipt Image):</label>
+              <input type="file" id="store-logo-input" accept="image/*" />
+              <small class="printer-hint-text">High-contrast black & white PNG/JPG recommended.</small>
+            </div>
+            <div class="form-group">
+              <label>Logo Preview:</label>
+              <div class="img-preview-box img-preview-logo">
+                <img id="store-logo-preview" src="" alt="Store Logo Preview" class="hidden logo-preview-img" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tab 7: Cloud Sync & Remote Database Settings -->
+      <section class="admin-tab-pane" id="pane-sync">
+        <div class="admin-table-controls">
+          <div>
+            <h3>Cloud Database Synchronization</h3>
+            <p class="printer-hint-text">
+              Automatic 1-way hourly push sync active. App operates 100% locally on IndexedDB offline.
+            </p>
+          </div>
+          <div class="admin-actions-group">
+            <button type="button" class="btn-tool" id="btn-pull-catalog">📥 Fetch Remote Catalog</button>
+            <button type="button" class="btn-pay btn-cash" id="btn-push-orders">🚀 Sync Now (Push Orders)</button>
+          </div>
+        </div>
+
+        <div class="sync-settings-card">
+          <div class="form-group">
+            <label for="sync-source-select">Remote Database Source:</label>
+            <select id="sync-source-select" class="form-select">
+              <option value="firebase">Firebase Realtime Database (REST)</option>
+              <option value="gas">Google Apps Script (Web App Endpoint)</option>
+            </select>
+          </div>
+
+          <!-- Firebase REST Fields -->
+          <div id="sync-fields-firebase" class="sync-conditional-fields">
+            <div class="form-group">
+              <label for="sync-firebase-url">Firebase Database URL:</label>
+              <input 
+                type="url" 
+                id="sync-firebase-url" 
+                placeholder="https://your-project-default-rtdb.firebaseio.com" 
+              />
+            </div>
+            <div class="form-group">
+              <label for="sync-firebase-auth">Firebase Auth Token / Database Secret (Optional):</label>
+              <input 
+                type="password" 
+                id="sync-firebase-auth" 
+                placeholder="Database Secret or ID Token" 
+              />
+            </div>
+          </div>
+
+          <!-- Google Apps Script Fields -->
+          <div id="sync-fields-gas" class="sync-conditional-fields hidden">
+            <div class="form-group">
+              <label for="sync-gas-url">Google Apps Script Web App URL:</label>
+              <input 
+                type="url" 
+                id="sync-gas-url" 
+                placeholder="https://script.google.com/macros/s/AKfycb.../exec" 
+              />
+            </div>
+            <div class="form-group">
+              <label for="sync-gas-secret">GAS Access Token / Webhook Secret (Optional):</label>
+              <input 
+                type="password" 
+                id="sync-gas-secret" 
+                placeholder="Bearer Secret Token" 
+              />
+            </div>
+          </div>
+
+          <div class="form-row-2 form-row-mt">
+            <div class="form-group">
+              <label>Unsynced Local Orders Queue:</label>
+              <h3 id="stat-unsynced-orders" class="stat-pending-label">0 Orders Pending</h3>
+            </div>
+            <div class="form-group form-group-end form-actions-inline">
+              <button type="button" class="btn-tool" id="btn-copy-backend-config" title="Copy Backend Code Template (Code.gs or database.rules.json)">📋 Config</button>
+              <button type="button" class="btn-tool" id="btn-save-sync-config">💾 Save Cloud Settings</button>
+            </div>
+          </div>
+
+          <div class="sync-status-console">
+            <label>Sync Diagnostic Console:</label>
+            <pre id="sync-log-terminal">System ready. Automatic 1-hour push scheduler engaged.</pre>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ============================================================= -->
+  <!-- 3. MAIN CASHIER REGISTER INTERFACE                            -->
+  <!-- ============================================================= -->
+  <div id="layout">
+    
+    <!-- Top Bar -->
+    <header class="topbar">
+      <div class="brand-group">
+        <span class="brand-title">POS REG-01</span>
+        <span class="badge" id="net-badge">OFFLINE</span>
+        <div class="cashier-pill" id="current-cashier-pill">
+          <span class="cashier-dot"></span>
+          <span id="txt-active-cashier">Not Signed In</span>
+        </div>
+      </div>
+
+      <div class="search-group">
+        <input type="text" id="barcode-input" placeholder="Scan barcode (or type + Enter)..." />
+      </div>
+
+      <div class="controls-group">
+        <div class="theme-toggle">
+          <button type="button" class="btn-theme" data-mode="basic" id="btn-theme-basic">Basic</button>
+          <button type="button" class="btn-theme active" data-mode="modern" id="btn-theme-modern">Modern</button>
+        </div>
+        <button type="button" class="btn-tool btn-admin hidden" id="btn-open-admin">⚙️ Admin</button>
+        <button type="button" class="btn-tool" id="btn-printer-dialog">🖨️ Printers</button>
+        <button type="button" class="btn-tool" id="btn-kick-drawer">Drawer</button>
+        <button type="button" class="btn-tool btn-lock-terminal" id="btn-lock-terminal" title="Lock POS">🔒 Lock</button>
+      </div>
+    </header>
+
+    <!-- Main Workspace (Adaptive 3-Column Layout) -->
+    <div class="workspace">
+      
+      <!-- 1. Left Category Sidebar (Square Cards with Images) -->
+      <aside class="category-sidebar" id="category-tabs"></aside>
+
+      <!-- 2. Center Catalog Panel (Product Grid & Quick Menu Shelf) -->
+      <section class="catalog-panel">
+        <div class="product-grid" id="product-grid"></div>
+
+        <!-- Quick Menu Shelf for Addons -->
+        <div class="quick-menu-container" id="quick-menu-container">
+          <div class="quick-menu-header">
+            <span class="quick-menu-title">⚡ Quick Menu & Add-ons</span>
+            <span class="quick-menu-hint">One-touch additions to active ticket</span>
+          </div>
+          <div class="quick-menu-scroll" id="quick-menu-scroll"></div>
+        </div>
+      </section>
+
+      <!-- 3. Right Cart / Ticket Panel -->
+      <section class="ticket-panel">
+        <div class="ticket-header">
+          <div>
+            <h3>Current Ticket</h3>
+            <small id="ticket-id">#ORD-0001</small>
+          </div>
+          <button type="button" class="btn-danger-outline" id="btn-clear-cart">Clear All</button>
+        </div>
+
+        <div class="ticket-scroll">
+          <table class="ticket-table">
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th class="text-center">Qty</th>
+                <th class="text-right">Price</th>
+                <th class="text-right">Total</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="cart-tbody"></tbody>
+          </table>
+        </div>
+
+        <div class="ticket-footer">
+          <div class="bill-row"><span>Vatable Sales:</span><span id="txt-subtotal">₱0.00</span></div>
+          <div class="bill-row"><span>VAT (12%):</span><span id="txt-tax">₱0.00</span></div>
+          <div class="bill-row total-row"><span>Amount Due:</span><span id="txt-total">₱0.00</span></div>
+          
+          <div class="checkout-grid">
+            <button type="button" class="btn-pay btn-cash" id="btn-pay-cash">
+              <span>Cash Payment</span>
+              <kbd>F8</kbd>
+            </button>
+            <button type="button" class="btn-pay btn-gcash" id="btn-pay-gcash">
+              <span>GCash QR Ph</span>
+              <kbd>F9</kbd>
+            </button>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- ============================================================= -->
+  <!-- 4. MODALS AND FORMS                                           -->
+  <!-- ============================================================= -->
+
+  <!-- MODAL 1: Manager Void Scan Required -->
+  <dialog class="pos-modal" id="modal-void">
+    <div class="modal-box modal-box-void">
+      <div class="printer-modal-header">
+        <div>
+          <h3>⚠️ Manager Authorization Required</h3>
+          <p class="printer-hint-text">Scan badge or enter PIN to void: <b id="void-item-label">-</b></p>
+        </div>
+        <button type="button" class="btn-tool btn-danger-outline btn-sm" id="btn-cancel-void-x">✖</button>
+      </div>
+
+      <div class="modal-two-pane">
+        <!-- Void Left Pane: Camera Scanner -->
+        <div class="modal-pane-left">
+          <div class="camera-scanner-wrap" id="void-camera-wrap">
+            <video id="void-camera-preview" playsinline autoplay muted></video>
+            <div class="camera-scan-overlay">
+              <div class="camera-reticle"></div>
+              <div class="camera-laser"></div>
+            </div>
+            <div class="camera-status-pill" id="void-camera-status">Point manager badge QR to camera</div>
+          </div>
+          <div class="modal-actions modal-actions-stacked">
+            <button type="button" class="btn-tool btn-block" id="btn-cancel-void">Cancel</button>
+          </div>
+        </div>
+
+        <!-- Void Right Pane: PIN Input and Numpad -->
+        <div class="modal-pane-right">
+          <div class="login-input-wrap">
+            <input 
+              type="password" 
+              id="manager-qr-input" 
+              maxlength="6" 
+              placeholder="••••" 
+              readonly 
+            />
+          </div>
+
+          <div id="void-error-msg" class="login-error"></div>
+
+          <!-- Touch Numpad for Manager PIN Entry -->
+          <div class="numpad-grid">
+            <button type="button" class="btn-num" data-val="1">1</button>
+            <button type="button" class="btn-num" data-val="2">2</button>
+            <button type="button" class="btn-num" data-val="3">3</button>
+            <button type="button" class="btn-num" data-val="4">4</button>
+            <button type="button" class="btn-num" data-val="5">5</button>
+            <button type="button" class="btn-num" data-val="6">6</button>
+            <button type="button" class="btn-num" data-val="7">7</button>
+            <button type="button" class="btn-num" data-val="8">8</button>
+            <button type="button" class="btn-num" data-val="9">9</button>
+            <button type="button" class="btn-num btn-num-action btn-clear" id="btn-void-clear">CLR</button>
+            <button type="button" class="btn-num" data-val="0">0</button>
+            <button type="button" class="btn-num btn-num-action btn-submit" id="btn-void-submit">OK</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- MODAL 2: Dynamic GCash EMVCo QR Display -->
+  <dialog class="pos-modal" id="modal-gcash">
+    <div class="modal-box text-center">
+      <h3>Scan to Pay with GCash</h3>
+      <p>Exact amount encoded dynamically:</p>
+      <h2 id="gcash-amount-label" class="text-blue">₱0.00</h2>
+      <div id="gcash-qrcode" class="qr-container"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn-tool" id="btn-close-gcash">Cancel</button>
+        <button type="button" class="btn-pay btn-cash" id="btn-confirm-gcash">Payment Received</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- MODAL 3: Thermal Multi-Printer Hub & Configuration -->
+  <dialog class="pos-modal" id="modal-printer">
+    <div class="modal-box modal-box-printer">
+      <div class="printer-modal-header">
+        <div>
+          <h3>🖨️ Thermal Printer Hub</h3>
+          <p class="printer-hint-text">
+            Designate printers as <b>Primary</b> (Customer Copy with prices) or <b>Secondary</b> (Server Slip with orders only). Compatible with standard ESC/POS & XPrinter.
+          </p>
+        </div>
+        <button type="button" class="btn-tool btn-danger-outline btn-sm" id="btn-close-printer-hub">✖ Close</button>
+      </div>
+
+      <!-- Configured Printers Filter & Controls -->
+      <div class="printer-section-title">
+        <span>Active & Paired Printers</span>
+        <div class="printer-section-actions">
+          <select id="printer-filter-interface" class="form-select printer-filter-select" title="Filter by Interface Type">
+            <option value="all">All Interfaces (Display All Printers)</option>
+            <option value="network">LAN / Wi-Fi (Network)</option>
+            <option value="bluetooth">Bluetooth (Wireless)</option>
+            <option value="usb">Wired / USB</option>
+          </select>
+          <button type="button" class="btn-tool btn-sm" id="btn-test-all-printers">Test Selected</button>
+        </div>
+      </div>
+
+      <div class="printer-list-container" id="printer-list-container">
+        <!-- Rendered dynamically from IndexedDB -->
+      </div>
+
+      <hr class="printer-divider" />
+
+      <!-- Add New Printer Section -->
+      <div class="printer-section-title">
+        <span>➕ Add New Printer</span>
+      </div>
+
+      <div class="printer-form-grid">
+        <div class="form-group">
+          <label for="new-printer-name">Printer Name / Location:</label>
+          <input type="text" id="new-printer-name" placeholder="e.g., Counter Main or Kitchen Station" required />
+        </div>
+
+        <div class="form-row-3">
+          <div class="form-group">
+            <label for="new-printer-type">Interface Type:</label>
+            <select id="new-printer-type" class="form-select">
+              <option value="all">All (Display / Universal)</option>
+              <option value="network">LAN / Wi-Fi (Network)</option>
+              <option value="bluetooth">Bluetooth (Wireless)</option>
+              <option value="usb">Wired / USB</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="new-printer-role">Role / Target Copy:</label>
+            <select id="new-printer-role" class="form-select">
+              <option value="primary">Primary (Customer Copy)</option>
+              <option value="secondary">Secondary (Server Slip)</option>
+              <option value="both">Both (Customer & Server)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="new-printer-paper">Paper Width:</label>
+            <select id="new-printer-paper" class="form-select">
+              <option value="58mm">58mm (32 Cols)</option>
+              <option value="80mm">80mm (48 Cols)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Network TCP Fields -->
+        <div class="printer-conditional-fields" id="field-network-wrap">
+          <div class="form-row-2">
+            <div class="form-group">
+              <label for="new-printer-ip">Target IP Address:</label>
+              <input type="text" id="new-printer-ip" value="192.168.1.100" placeholder="192.168.1.100" />
+            </div>
+            <div class="form-group">
+              <label for="new-printer-port">Port (Default 9100):</label>
+              <input type="number" id="new-printer-port" value="9100" placeholder="9100" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Bluetooth Wireless Fields -->
+        <div class="printer-conditional-fields hidden" id="field-bluetooth-wrap">
+          <div class="form-group">
+            <label for="new-printer-bt-name">Bluetooth Device Name / MAC:</label>
+            <input type="text" id="new-printer-bt-name" placeholder="e.g., MPT-II or 00:11:22:33:44:55" />
+          </div>
+        </div>
+
+        <!-- Wired / USB Dropdown & Scanner Fields -->
+        <div class="printer-conditional-fields hidden" id="field-usb-wrap">
+          <div class="form-group">
+            <label for="new-printer-usb-select">Installed / Connected USB Printers:</label>
+            <div class="usb-scan-input-wrap">
+              <select id="new-printer-usb-select" class="form-select usb-select-flex">
+                <option value="">-- Select Detected USB Printer --</option>
+              </select>
+              <button type="button" class="btn-tool" id="btn-scan-usb-printer" title="Search and Pair USB Printer">🔍 Pair USB</button>
+            </div>
+            <input type="hidden" id="new-printer-usb-port" />
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" class="btn-pay btn-cash" id="btn-save-new-printer">+ Add Printer</button>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- MODAL 4: Item CRUD Editor with Monitoring Controls & Camera Barcode Scanner -->
+  <dialog class="pos-modal" id="modal-item-form">
+    <div class="modal-box modal-box-wide">
+      <h3 id="item-modal-title">Item Editor</h3>
+      <input type="hidden" id="edit-item-id" />
+      
+      <label for="item-name-input">Item Name:</label>
+      <input type="text" id="item-name-input" placeholder="e.g., Caramel Macchiato" required />
+
+      <label for="item-cat-select">Category:</label>
+      <select id="item-cat-select" class="form-select"></select>
+
+      <div class="form-row-2">
+        <div>
+          <label for="item-price-input">Price (₱):</label>
+          <input type="number" step="0.01" id="item-price-input" placeholder="0.00" required />
+        </div>
+        <div>
+          <label for="item-bc-input">Barcode:</label>
+          <div class="barcode-input-group">
+            <input type="text" id="item-bc-input" placeholder="Scan or type..." />
+            <button type="button" class="btn-tool btn-barcode-scan" id="btn-scan-item-barcode" title="Scan Barcode with Device Camera">📷 Scan</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Inventory Monitoring Configuration Section -->
+      <div class="inventory-config-group">
+        <label class="checkbox-label checkbox-label-strong">
+          <input type="checkbox" id="item-monitored-checkbox" class="input-checkbox-lg" />
+          <span>Monitor Item Stock (Track limited inventory quantity)</span>
+        </label>
+
+        <!-- Monitored Stock Fields -->
+        <div id="item-stock-fields-wrap" class="form-row-2 hidden form-row-mt">
+          <div>
+            <label for="item-stock-input">Current Stock Quantity:</label>
+            <input type="number" id="item-stock-input" min="0" value="0" placeholder="Available units" />
+          </div>
+          <div>
+            <label for="item-threshold-input">Custom Low-Stock Warning Threshold:</label>
+            <input type="number" id="item-threshold-input" min="0" placeholder="Default (Global)" />
+          </div>
+        </div>
+
+        <!-- Unmonitored Availability Fields -->
+        <div id="item-unmonitored-fields-wrap" class="unmonitored-wrap">
+          <label class="checkbox-label checkbox-label-sm">
+            <input type="checkbox" id="item-available-checkbox" checked class="input-checkbox-md" />
+            <span>Mark as Available for Sale (Uncheck if temporarily unavailable)</span>
+          </label>
+        </div>
+      </div>
+
+      <label for="item-pic-input">Product Picture:</label>
+      <input type="file" id="item-pic-input" accept="image/*" />
+      <div class="img-preview-box">
+        <img id="item-pic-preview" src="" alt="Preview" class="hidden" />
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn-tool" id="btn-cancel-item">Cancel</button>
+        <button type="button" class="btn-pay btn-cash" id="btn-save-item">Save Item</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- MODAL 5: Category CRUD Editor (Add / Edit) with Quick Menu Addons Checkbox -->
+  <dialog class="pos-modal" id="modal-category-form">
+    <div class="modal-box modal-box-wide">
+      <h3 id="category-modal-title">Category Editor</h3>
+      <input type="hidden" id="edit-category-id" />
+      
+      <label for="cat-name-input">Category Name:</label>
+      <input type="text" id="cat-name-input" placeholder="e.g., Pastries or Coffee Add-ons" required />
+
+      <label for="cat-order-input">Display Order (Sorting Priority):</label>
+      <input type="number" id="cat-order-input" placeholder="e.g., 5" min="1" value="1" required />
+
+      <!-- Quick Menu Add-ons Classification Flag -->
+      <div class="inventory-config-group category-addon-group">
+        <label class="checkbox-label checkbox-label-strong">
+          <input type="checkbox" id="cat-addon-checkbox" class="input-checkbox-lg" />
+          <span>Mark as "Add-ons" Category (Display items in the register Quick Menu bar)</span>
+        </label>
+        <small class="printer-hint-text">Items under this category will automatically populate the quick-access shelf below the product catalog.</small>
+      </div>
+
+      <label for="cat-pic-input">Category Icon / Picture:</label>
+      <input type="file" id="cat-pic-input" accept="image/*" />
+      <div class="img-preview-box">
+        <img id="cat-pic-preview" src="" alt="Preview" class="hidden" />
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn-tool" id="btn-cancel-category">Cancel</button>
+        <button type="button" class="btn-pay btn-cash" id="btn-save-category">Save Category</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- MODAL 6: User Management Editor (Add / Edit) -->
+  <dialog class="pos-modal" id="modal-user-form">
+    <div class="modal-box">
+      <h3 id="user-modal-title">Create New Staff User</h3>
+      <input type="hidden" id="edit-user-id" />
+
+      <label for="user-name-input">Full Name:</label>
+      <input type="text" id="user-name-input" placeholder="Staff Name" required />
+
+      <label for="user-role-select">Role / Title:</label>
+      <select id="user-role-select" class="form-select">
+        <option value="user">User (Cashier)</option>
+        <option value="admin">Admin (Manager)</option>
+      </select>
+
+      <label for="user-pin-input">Numeric PIN (4–6 Digits):</label>
+      <input type="password" maxlength="6" id="user-pin-input" placeholder="••••" required />
+
+      <label for="user-badge-input">Badge Code / Token (Optional):</label>
+      <input type="text" id="user-badge-input" placeholder="e.g., STAFF-02" />
+
+      <div class="modal-actions">
+        <button type="button" class="btn-tool" id="btn-cancel-user">Cancel</button>
+        <button type="button" class="btn-pay btn-cash" id="btn-save-user">Save User</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- MODAL 7: Staff QR Login Badge Generator & Exporter -->
+  <dialog class="pos-modal" id="modal-staff-qr">
+    <div class="modal-box text-center modal-box-staff-badge">
+      <div class="printer-modal-header">
+        <div>
+          <h3>💳 Staff QR Login Badge</h3>
+          <p class="printer-hint-text">Save as an image on your phone or print to login instantly via camera.</p>
+        </div>
+        <button type="button" class="btn-tool btn-danger-outline btn-sm" id="btn-close-staff-qr">✖ Close</button>
+      </div>
+
+      <!-- Rendered Composite Card Canvas Preview -->
+      <div class="staff-badge-card-container">
+        <canvas id="staff-qr-canvas" class="staff-qr-canvas"></canvas>
+      </div>
+
+      <div class="modal-actions modal-actions-center">
+        <button type="button" class="btn-tool" id="btn-dismiss-staff-qr">Close</button>
+        <button type="button" class="btn-pay btn-cash" id="btn-download-staff-qr">📥 Save to Phone (Image)</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- MODAL 8: Cash Payment Confirmation & Change Calculator -->
+  <dialog class="pos-modal" id="modal-cash-confirm">
+    <div class="modal-box">
+      <div class="printer-modal-header">
+        <div>
+          <h3>💵 Cash Payment Confirmation</h3>
+          <p class="printer-hint-text">Enter cash received to compute change and complete order.</p>
+        </div>
+        <button type="button" class="btn-tool btn-danger-outline btn-sm" id="btn-cancel-cash-x">✖</button>
+      </div>
+
+      <div class="payment-confirm-summary">
+        <div class="bill-row">
+          <span>Amount Due:</span>
+          <b id="cash-due-amount" class="cash-due-label">₱0.00</b>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="cash-tendered-input">Cash Tendered (₱):</label>
+        <input 
+          type="number" 
+          step="0.01" 
+          id="cash-tendered-input" 
+          placeholder="0.00" 
+          class="tender-large-input" 
+          required 
+        />
+      </div>
+
+      <!-- Quick Tender Helper Buttons -->
+      <div class="quick-cash-grid">
+        <button type="button" class="btn-tool btn-quick-cash" data-val="exact">Exact</button>
+        <button type="button" class="btn-tool btn-quick-cash" data-val="50">₱50</button>
+        <button type="button" class="btn-tool btn-quick-cash" data-val="100">₱100</button>
+        <button type="button" class="btn-tool btn-quick-cash" data-val="200">₱200</button>
+        <button type="button" class="btn-tool btn-quick-cash" data-val="500">₱500</button>
+        <button type="button" class="btn-tool btn-quick-cash" data-val="1000">₱1,000</button>
+      </div>
+
+      <!-- Customer Buzzer / Pager Selection Container -->
+      <div class="pager-selection-box hidden" id="cash-pager-container">
+        <div class="pager-header">
+          <label>Select Customer Pager / Buzzer:</label>
+          <span class="pager-selected-badge" id="cash-pager-selected-label">None</span>
+        </div>
+        <div class="pager-grid" id="cash-pager-grid"></div>
+      </div>
+
+      <div class="payment-change-box">
+        <span class="change-label">Change Due:</span>
+        <h2 id="cash-change-amount" class="change-amount">₱0.00</h2>
+      </div>
+
+      <div id="cash-error-msg" class="error-text"></div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn-tool" id="btn-cancel-cash">Cancel</button>
+        <button type="button" class="btn-pay btn-cash" id="btn-finalize-cash">Complete Sale & Print</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- MODAL 9: GCash Verification & Reference Capture -->
+  <dialog class="pos-modal" id="modal-gcash-confirm">
+    <div class="modal-box">
+      <div class="printer-modal-header">
+        <div>
+          <h3>📱 GCash Payment Confirmation</h3>
+          <p class="printer-hint-text">Verify customer mobile receipt details before completing order.</p>
+        </div>
+        <button type="button" class="btn-tool btn-danger-outline btn-sm" id="btn-cancel-gcash-confirm-x">✖</button>
+      </div>
+
+      <div class="form-group">
+        <label for="gcash-ref-input">GCash Reference No. (Ref No.):</label>
+        <input 
+          type="text" 
+          id="gcash-ref-input" 
+          placeholder="e.g., 9012 3456 7890" 
+          maxlength="30" 
+          required 
+        />
+      </div>
+
+      <div class="form-group">
+        <label for="gcash-amount-paid-input">Amount Paid (₱):</label>
+        <input 
+          type="number" 
+          step="0.01" 
+          id="gcash-amount-paid-input" 
+          placeholder="0.00" 
+          required 
+        />
+      </div>
+
+      <div class="form-group">
+        <label for="gcash-payment-date-input">Date & Time of GCash Payment:</label>
+        <input 
+          type="datetime-local" 
+          id="gcash-payment-date-input" 
+          required 
+        />
+      </div>
+
+      <!-- Customer Buzzer / Pager Selection Container -->
+      <div class="pager-selection-box hidden" id="gcash-pager-container">
+        <div class="pager-header">
+          <label>Select Customer Pager / Buzzer:</label>
+          <span class="pager-selected-badge" id="gcash-pager-selected-label">None</span>
+        </div>
+        <div class="pager-grid" id="gcash-pager-grid"></div>
+      </div>
+
+      <div id="gcash-confirm-error" class="error-text"></div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn-tool" id="btn-back-gcash-confirm">Back to QR</button>
+        <button type="button" class="btn-pay btn-cash" id="btn-finalize-gcash">Confirm & Print</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- MODAL 10: Stock Replenishment / Quick Adjust Modal -->
+  <dialog class="pos-modal" id="modal-stock-adjust">
+    <div class="modal-box">
+      <div class="printer-modal-header">
+        <div>
+          <h3 id="stock-adjust-item-title">Adjust Stock</h3>
+          <p class="printer-hint-text" id="stock-adjust-current-label">Current: 0 units</p>
+        </div>
+        <button type="button" class="btn-tool btn-danger-outline btn-sm" id="btn-close-stock-adjust">✖</button>
+      </div>
+      <input type="hidden" id="stock-adjust-item-id" />
+
+      <div class="form-group">
+        <label>Add Stock (+ Units):</label>
+        <div class="quick-cash-grid">
+          <button type="button" class="btn-tool btn-quick-stock" data-val="5">+5</button>
+          <button type="button" class="btn-tool btn-quick-stock" data-val="10">+10</button>
+          <button type="button" class="btn-tool btn-quick-stock" data-val="25">+25</button>
+          <button type="button" class="btn-tool btn-quick-stock" data-val="50">+50</button>
+          <button type="button" class="btn-tool btn-quick-stock" data-val="100">+100</button>
+          <button type="button" class="btn-tool btn-quick-stock" data-val="custom">Custom</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="input-set-absolute-stock">Or Set Absolute Quantity Directly:</label>
+        <input type="number" id="input-set-absolute-stock" min="0" placeholder="Enter new absolute stock count" />
+      </div>
+
+      <div class="form-group">
+        <label for="input-item-threshold-override">Custom Item Low-Stock Warning Threshold:</label>
+        <input type="number" id="input-item-threshold-override" min="0" placeholder="Blank for default" />
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn-tool" id="btn-cancel-stock-adjust">Cancel</button>
+        <button type="button" class="btn-pay btn-cash" id="btn-save-stock-adjust">Update Stock</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- MODAL 11: Barcode Camera Scanner for Item Registration -->
+  <dialog class="pos-modal" id="modal-barcode-scanner">
+    <div class="modal-box text-center">
+      <div class="printer-modal-header">
+        <div>
+          <h3>📷 Scan Product Barcode</h3>
+          <p class="printer-hint-text">Position the product barcode within the reticle</p>
+        </div>
+        <button type="button" class="btn-tool btn-danger-outline btn-sm" id="btn-close-barcode-scanner">✖</button>
+      </div>
+
+      <div class="camera-scanner-wrap" id="item-scanner-wrap">
+        <video id="item-barcode-video" playsinline autoplay muted></video>
+        <div class="camera-scan-overlay">
+          <div class="camera-reticle barcode-reticle"></div>
+          <div class="camera-laser barcode-laser"></div>
+        </div>
+        <div class="camera-status-pill" id="item-barcode-status">Align barcode to scan</div>
+      </div>
+
+      <div class="modal-actions modal-actions-center">
+        <button type="button" class="btn-tool" id="btn-cancel-barcode-camera">Cancel</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- MODAL 12: Direct Cart Item Quantity Editor -->
+  <dialog class="pos-modal" id="modal-cart-qty">
+    <div class="modal-box text-center modal-box-qty">
+      <div class="printer-modal-header">
+        <div>
+          <h3>✏️ Edit Item Quantity</h3>
+          <p class="printer-hint-text" id="cart-qty-item-name">Item Name Here</p>
+        </div>
+        <button type="button" class="btn-tool btn-danger-outline btn-sm" id="btn-close-cart-qty-x">✖</button>
+      </div>
+      <input type="hidden" id="cart-qty-item-id" />
+
+      <div class="form-group form-group-sm-margin">
+        <input 
+          type="text" 
+          id="cart-qty-input" 
+          class="tender-large-input" 
+          readonly 
+          value="1" 
+        />
+      </div>
+
+      <div id="cart-qty-error-msg" class="error-text"></div>
+
+      <!-- Touch Numpad Grid -->
+      <div class="numpad-grid">
+        <button type="button" class="btn-num" data-val="1">1</button>
+        <button type="button" class="btn-num" data-val="2">2</button>
+        <button type="button" class="btn-num" data-val="3">3</button>
+        <button type="button" class="btn-num" data-val="4">4</button>
+        <button type="button" class="btn-num" data-val="5">5</button>
+        <button type="button" class="btn-num" data-val="6">6</button>
+        <button type="button" class="btn-num" data-val="7">7</button>
+        <button type="button" class="btn-num" data-val="8">8</button>
+        <button type="button" class="btn-num" data-val="9">9</button>
+        <button type="button" class="btn-num btn-num-action btn-clear" id="btn-cart-qty-clear">CLR</button>
+        <button type="button" class="btn-num" data-val="0">0</button>
+        <button type="button" class="btn-num btn-num-action btn-submit" id="btn-cart-qty-submit">OK</button>
+      </div>
+
+      <div class="modal-actions modal-actions-mt">
+        <button type="button" class="btn-tool btn-block" id="btn-cancel-cart-qty">Cancel</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- MODAL 13: In-App Order Void Confirmation -->
+  <dialog class="pos-modal" id="modal-void-order">
+    <div class="modal-box modal-box-void-confirm">
+      <div class="printer-modal-header">
+        <div>
+          <h3>⚠️ Void Sale Authorization</h3>
+          <p class="printer-hint-text">Confirm void for transaction: <b id="void-order-number-label">ORD-000000</b></p>
+        </div>
+        <button type="button" class="btn-tool btn-danger-outline btn-sm" id="btn-close-void-order-x">✖</button>
+      </div>
+      <input type="hidden" id="void-order-id-input" />
+      <input type="hidden" id="void-order-num-input" />
+
+      <div class="form-group form-group-sm-margin">
+        <label for="void-order-reason-input" class="label-bold-sm">Reason for Voiding:</label>
+        <input 
+          type="text" 
+          id="void-order-reason-input" 
+          placeholder="e.g., Customer refund, error entry, test order" 
+          class="input-padded"
+          required 
+        />
+      </div>
+
+      <div id="void-order-error-msg" class="error-text"></div>
+
+      <div class="modal-actions modal-actions-mt">
+        <button type="button" class="btn-tool" id="btn-cancel-void-order">Cancel</button>
+        <button type="button" class="btn-action-sm btn-action-del btn-action-padded" id="btn-confirm-void-order">Confirm Void</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
+<!-- REMARK: INDEX_HTML_SYNC_CONFIG_BTN_COMPLETE -->
