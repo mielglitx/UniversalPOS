@@ -1,10 +1,10 @@
 /**
  * Module Description: Local Offline Storage Subsystem (Dexie.js / IndexedDB)
- * Persists staff accounts, product catalog, categories, completed sales orders,
- * line-item void audit logs, thermal printer hub hardware targets, store profile
- * configuration (including buzzer/pager toggle and quantity capacity), and offline
- * sync queues. Implements atomic stock deduction upon sale, soft-void cancellation
- * with monitored inventory restitution, and low-bandwidth cloud delta synchronization.
+ * Persists staff accounts, product catalog (with creation timestamps for chronological sorting),
+ * categories (with batch order re-indexing for auto and manual sorting), completed sales orders,
+ * line-item void audit logs, thermal printer hub hardware targets, store profile configuration
+ * (including buzzer/pager toggle and quantity capacity), and offline sync queues. Implements
+ * atomic stock deduction upon sale, soft-void cancellation, and cloud delta synchronization.
  */
 
 // Fallback image SVGs for category and product initialization
@@ -52,6 +52,11 @@ localDB.version(5).stores({
 // Version 6: Addons category classification for Quick Menu shelf
 localDB.version(6).stores({
   categories: "id, order, isAddon"
+});
+
+// Version 7: Index creation timestamps for product catalog sorting
+localDB.version(7).stores({
+  products: "id, cat, bc, isMonitored, isAvailable, createdAt"
 });
 
 export const DB = {
@@ -115,7 +120,8 @@ export const DB = {
             isMonitored: false,
             stock: 0,
             threshold: null,
-            isAvailable: true
+            isAvailable: true,
+            createdAt: "2026-01-01T08:00:00.000Z"
           },
           {
             id: "P2",
@@ -127,7 +133,8 @@ export const DB = {
             isMonitored: false,
             stock: 0,
             threshold: null,
-            isAvailable: true
+            isAvailable: true,
+            createdAt: "2026-01-01T08:05:00.000Z"
           },
           {
             id: "P3",
@@ -139,7 +146,8 @@ export const DB = {
             isMonitored: true,
             stock: 15,
             threshold: 5,
-            isAvailable: true
+            isAvailable: true,
+            createdAt: "2026-01-01T08:10:00.000Z"
           },
           {
             id: "P4",
@@ -151,7 +159,8 @@ export const DB = {
             isMonitored: true,
             stock: 24,
             threshold: 6,
-            isAvailable: true
+            isAvailable: true,
+            createdAt: "2026-01-01T08:15:00.000Z"
           }
         ]);
       }
@@ -416,6 +425,19 @@ export const DB = {
     return await this.getCategoryById(id);
   },
 
+  /**
+   * Atomically batch-updates display order values across multiple categories
+   * @param {Array<{id: string, order: number}>} orderList
+   */
+  async updateCategoryOrders(orderList) {
+    if (!Array.isArray(orderList) || orderList.length === 0) return;
+    await localDB.transaction("rw", localDB.categories, async () => {
+      for (const item of orderList) {
+        await localDB.categories.update(item.id, { order: parseInt(item.order, 10) || 1 });
+      }
+    });
+  },
+
   async deleteCategory(id) {
     if (id === "all") throw new Error("Cannot delete root 'all' category.");
     return await localDB.categories.delete(id);
@@ -463,7 +485,8 @@ export const DB = {
       threshold: (product.threshold !== null && product.threshold !== undefined && product.threshold !== "")
         ? Math.max(0, parseInt(product.threshold, 10) || 0)
         : null,
-      isAvailable
+      isAvailable,
+      createdAt: product.createdAt || new Date().toISOString()
     };
 
     await localDB.products.add(newProduct);
@@ -729,4 +752,4 @@ export const DB = {
   }
 };
 
-// REMARK: DB_JS_PAGER_FEATURE_COMPLETE
+// REMARK: DB_JS_SORTING_SUPPORT_COMPLETE

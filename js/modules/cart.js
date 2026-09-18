@@ -2,14 +2,45 @@
  * Module Description: Active Ticket & VAT Calculation Engine
  * Governs active cart line items, validates inventory stock ceilings,
  * enforces item availability toggles, calculates Philippine statutory 12%
- * VAT-inclusive financial totals, and emits reactive state update events.
+ * VAT-inclusive financial totals, emits reactive application events,
+ * and synchronizes ticket state with the customer-facing dual monitor
+ * display via BroadcastChannel ('pos_customer_display') and localStorage fallback.
  */
 
 import { Bus } from "./bus.js";
 import { DB } from "./db.js";
 
+// Initialize cross-screen broadcast channel for dual-monitor customer display
+const displayChannel = typeof window.BroadcastChannel !== "undefined"
+  ? new window.BroadcastChannel("pos_customer_display")
+  : null;
+
 export const Cart = {
   items: [],
+
+  /**
+   * Dispatches payload to external customer display window
+   * @param {Object} payload
+   */
+  broadcastToCustomer(payload) {
+    if (displayChannel) {
+      try {
+        displayChannel.postMessage(payload);
+      } catch (err) {
+        console.warn("[Cart BroadcastChannel Error]", err);
+      }
+    }
+
+    // Fallback via localStorage storage events for environments without BroadcastChannel
+    try {
+      localStorage.setItem("pos_customer_broadcast", JSON.stringify({
+        ...payload,
+        _timestamp: Date.now()
+      }));
+    } catch (e) {
+      // Storage quota or private browsing guard
+    }
+  },
 
   /**
    * Adds or increments a product in the active cart with stock verification
@@ -152,6 +183,10 @@ export const Cart = {
   clear() {
     this.items = [];
     this.notify();
+    this.broadcastToCustomer({
+      type: "checkout:cleared",
+      data: {}
+    });
   },
 
   /**
@@ -181,11 +216,18 @@ export const Cart = {
   },
 
   /**
-   * Broadcasts updated ticket calculations to all UI subscribers
+   * Broadcasts updated ticket calculations to all internal subscribers and external customer screens
    */
   notify() {
-    Bus.emit("cart:updated", this.calculate());
+    const calc = this.calculate();
+    Bus.emit("cart:updated", calc);
+
+    // Mirror cart updates directly to second monitor
+    this.broadcastToCustomer({
+      type: "cart:updated",
+      data: calc
+    });
   }
 };
 
-// REMARK: CART_JS_MODULARIZATION_COMPLETE
+// REMARK: CART_JS_CUSTOMER_BROADCAST_COMPLETE

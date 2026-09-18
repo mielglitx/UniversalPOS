@@ -1,8 +1,9 @@
 /**
  * Module Description: Terminal Login & Security Lock Screen Controller
- * Governs terminal authentication, physical and touch numpad input buffers,
- * optical QR camera stream lifecycle, dual-engine QR decoding (native BarcodeDetector
- * with jsQR software fallback), and administrative control visibility.
+ * Governs terminal authentication, physical keyboard and touch numpad input buffers,
+ * non-blocking optical QR camera stream lifecycle, dual-engine QR decoding (native
+ * BarcodeDetector with jsQR software fallback), graceful camera permission fallback,
+ * and administrative control visibility.
  */
 
 import { DB } from "./db.js";
@@ -28,21 +29,24 @@ export const LoginUI = {
   init(callbacks = {}) {
     this.callbacks = callbacks;
 
-    // Cache DOM selections
+    const screen = document.getElementById("login-screen");
+
+    // Cache DOM selections with strict scoping to the login screen
     this.elements = {
-      screen: document.getElementById("login-screen"),
+      screen,
       pinInput: document.getElementById("login-pin-input"),
       errorMsg: document.getElementById("login-error-msg"),
-      btnClear: document.getElementById("btn-pin-clear"),
-      btnSubmit: document.getElementById("btn-pin-submit"),
+      btnClear: screen ? screen.querySelector("#btn-pin-clear") : document.getElementById("btn-pin-clear"),
+      btnSubmit: screen ? screen.querySelector("#btn-pin-submit") : document.getElementById("btn-pin-submit"),
       txtActiveCashier: document.getElementById("txt-active-cashier"),
       btnLockTerminal: document.getElementById("btn-lock-terminal"),
       btnOpenAdmin: document.getElementById("btn-open-admin"),
-      numButtons: document.querySelectorAll(".btn-num[data-val]"),
+      numButtons: screen ? screen.querySelectorAll(".btn-num[data-val]") : document.querySelectorAll("#login-screen .btn-num[data-val]"),
 
       // Optical Scanner Viewport
       cameraWrap: document.getElementById("camera-scanner-wrap"),
       videoPreview: document.getElementById("login-camera-preview"),
+      cameraLaser: screen ? screen.querySelector(".camera-laser") : null,
       cameraStatus: document.getElementById("camera-status-pill")
     };
 
@@ -60,24 +64,42 @@ export const LoginUI = {
       }
     }
 
-    // Attach virtual numpad click listeners
-    if (this.elements.numButtons) {
+    // Attach virtual numpad click listeners immediately so touch input is instantly available
+    if (this.elements.numButtons && this.elements.numButtons.length > 0) {
       this.elements.numButtons.forEach((btn) => {
-        btn.onclick = () => this.appendDigit(btn.dataset.val);
+        btn.onclick = (e) => {
+          if (e) e.preventDefault();
+          this.appendDigit(btn.dataset.val);
+        };
       });
     }
 
     // Attach action button listeners
     if (this.elements.btnClear) {
-      this.elements.btnClear.onclick = () => this.clearPin();
+      this.elements.btnClear.onclick = (e) => {
+        if (e) e.preventDefault();
+        this.clearPin();
+      };
     }
 
     if (this.elements.btnSubmit) {
-      this.elements.btnSubmit.onclick = () => this.submitLogin();
+      this.elements.btnSubmit.onclick = (e) => {
+        if (e) e.preventDefault();
+        this.submitLogin();
+      };
     }
 
     if (this.elements.btnLockTerminal) {
       this.elements.btnLockTerminal.onclick = () => this.lockTerminal();
+    }
+
+    // Allow user to tap the camera scanner area to manually retry or initiate camera scan
+    if (this.elements.cameraWrap) {
+      this.elements.cameraWrap.onclick = () => {
+        if (!this.isScanningActive) {
+          this.startCameraScanner();
+        }
+      };
     }
 
     // Bind physical keyboard events cleanly without stacking duplicate listeners
@@ -87,13 +109,13 @@ export const LoginUI = {
     this.boundKeyDownHandler = (e) => this.handleKeyDown(e);
     window.addEventListener("keydown", this.boundKeyDownHandler);
 
-    // Start background optical QR scanner loop
-    this.startCameraScanner();
-
     // Initial focus on PIN field
     if (this.elements.pinInput) {
       this.elements.pinInput.focus();
     }
+
+    // Start background optical QR scanner in an isolated asynchronous thread
+    this.startCameraScanner();
   },
 
   /**
@@ -116,15 +138,18 @@ export const LoginUI = {
   },
 
   /**
-   * Activates device camera and binds video track to preview element
+   * Activates device camera safely with a timeout guard to prevent deadlocking input on permission rejection
    */
   async startCameraScanner() {
     if (!this.elements.videoPreview || this.isScanningActive) return;
 
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      this.updateCameraStatus("Camera unsupported (use PIN)", "#f59e0b");
+      this.updateCameraStatus("Camera unsupported • Use PIN", "#f59e0b");
+      this.setLaserActive(false);
       return;
     }
+
+    this.updateCameraStatus("Starting camera...", "#cbd5e1");
 
     try {
       const constraints = {
@@ -136,7 +161,13 @@ export const LoginUI = {
         audio: false
       };
 
-      this.mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+      // Guard getUserMedia with a 3-second timeout so pending native dialogs never freeze the app
+      const streamPromise = navigator.mediaDevices.getUserMedia(constraints);
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Camera permission request timed out")), 3000)
+      );
+
+      this.mediaStream = await Promise.race([streamPromise, timeoutPromise]);
       this.elements.videoPreview.srcObject = this.mediaStream;
       
       try {
@@ -146,11 +177,14 @@ export const LoginUI = {
       }
 
       this.isScanningActive = true;
+      this.setLaserActive(true);
       this.updateCameraStatus("Point badge QR to camera", "#cbd5e1");
       this.runScannerLoop();
     } catch (err) {
-      console.warn("[LoginUI] Unable to access camera hardware:", err.message);
-      this.updateCameraStatus("Camera unavailable (use PIN)", "#f59e0b");
+      console.warn("[LoginUI] Camera hardware not active:", err.message);
+      this.stopCameraScanner();
+      this.setLaserActive(false);
+      this.updateCameraStatus("Camera off • Use PIN (Tap to retry)", "#f59e0b");
     }
   },
 
@@ -211,7 +245,8 @@ export const LoginUI = {
 
       // 3. Inform user if neither scanner engine is present
       if (!this.barcodeDetector && typeof window.jsQR !== "function") {
-        this.updateCameraStatus("QR engine missing (use PIN)", "#f59e0b");
+        this.updateCameraStatus("QR engine missing • Use PIN", "#f59e0b");
+        this.setLaserActive(false);
         return;
       }
 
@@ -246,14 +281,18 @@ export const LoginUI = {
 
         // Cooldown period before resuming scanner to prevent rapid alert churn
         setTimeout(() => {
-          this.updateCameraStatus("Point badge QR to camera", "#cbd5e1");
+          if (this.isScanningActive) {
+            this.updateCameraStatus("Point badge QR to camera", "#cbd5e1");
+          }
           this.isProcessingScan = false;
         }, 2000);
       }
     } catch (err) {
       console.error("[LoginUI] Badge authentication failed:", err);
       this.isProcessingScan = false;
-      this.updateCameraStatus("Point badge QR to camera", "#cbd5e1");
+      if (this.isScanningActive) {
+        this.updateCameraStatus("Point badge QR to camera", "#cbd5e1");
+      }
     }
   },
 
@@ -276,6 +315,18 @@ export const LoginUI = {
 
     if (this.elements.videoPreview) {
       this.elements.videoPreview.srcObject = null;
+    }
+
+    this.setLaserActive(false);
+  },
+
+  /**
+   * Toggles scanning laser line visibility
+   * @param {boolean} active
+   */
+  setLaserActive(active) {
+    if (this.elements.cameraLaser) {
+      this.elements.cameraLaser.style.display = active ? "block" : "none";
     }
   },
 
@@ -409,12 +460,12 @@ export const LoginUI = {
 
     this.clearPin();
 
-    // Reactivate optical badge scanner
-    this.startCameraScanner();
-
     if (this.elements.pinInput) {
       this.elements.pinInput.focus();
     }
+
+    // Reactivate optical badge scanner safely
+    this.startCameraScanner();
 
     if (typeof this.callbacks.onLock === "function") {
       this.callbacks.onLock();
@@ -422,4 +473,4 @@ export const LoginUI = {
   }
 };
 
-// REMARK: LOGIN_UI_JS_MODULARIZATION_COMPLETE
+// REMARK: LOGIN_UI_JS_CAMERA_PERM_DECOUPLED_COMPLETE

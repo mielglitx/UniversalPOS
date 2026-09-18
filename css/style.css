@@ -2,9 +2,9 @@
  * Module Description: Standalone POS Register Primary Stylesheet
  * Provides styling for Basic and Modern themes, responsive multi-device
  * layouts (laptop, tablet, phone in landscape & portrait), dual-pane login/modal
- * screens, product catalog grids, touch numpad sizing, customer buzzer/pager
- * selection grids, and thermal printer controls. Optimized with compact phone
- * viewports to prevent oversized element scaling.
+ * screens, product catalog grids with sorting toolbars, touch numpad sizing,
+ * customer buzzer/pager selection grids, category drag-and-drop handles,
+ * dual-monitor customer display triggers, and ESC/POS thermal receipt paper simulation.
  */
 
 * { 
@@ -69,6 +69,12 @@ body {
   display: flex;
   justify-content: flex-end;
   align-items: flex-end;
+}
+
+.form-actions-inline {
+  display: flex;
+  gap: 6px;
+  align-items: center;
 }
 
 .settings-subtitle {
@@ -240,7 +246,14 @@ body[data-theme="basic"] .btn-cart-qty,
 body[data-theme="basic"] .quick-menu-container,
 body[data-theme="basic"] .quick-card,
 body[data-theme="basic"] .pager-selection-box,
-body[data-theme="basic"] .btn-pager-num {
+body[data-theme="basic"] .btn-pager-num,
+body[data-theme="basic"] .catalog-header-bar,
+body[data-theme="basic"] .catalog-sort-select,
+body[data-theme="basic"] .cat-order-pill,
+body[data-theme="basic"] .btn-order-move,
+body[data-theme="basic"] .drag-handle,
+body[data-theme="basic"] .preview-toolbar,
+body[data-theme="basic"] .thermal-paper-slip {
   border: var(--border) !important;
   box-shadow: none !important;
   border-radius: 0px !important;
@@ -281,6 +294,29 @@ body[data-theme="basic"] .btn-pager-num.active {
   border-color: #000000 !important;
 }
 
+body[data-theme="basic"] .btn-order-move:hover:not(:disabled) {
+  background: #000000 !important;
+  color: #ffffff !important;
+}
+
+body[data-theme="basic"] .drop-target-above td {
+  border-top: 2px solid #000000 !important;
+}
+
+body[data-theme="basic"] .drop-target-below td {
+  border-bottom: 2px solid #000000 !important;
+}
+
+body[data-theme="basic"] .is-dragging {
+  background: #dcdcdc !important;
+  opacity: 0.5 !important;
+}
+
+body[data-theme="basic"] .btn-customer-display {
+  background: #000000 !important;
+  color: #ffffff !important;
+}
+
 /* -------------------------------------------------------------
    THEME 2: MODERN (Spacious, Rounded, Soft Elevation)
 ------------------------------------------------------------- */
@@ -319,7 +355,14 @@ body[data-theme="modern"] .btn-cart-qty,
 body[data-theme="modern"] .quick-menu-container,
 body[data-theme="modern"] .quick-card,
 body[data-theme="modern"] .pager-selection-box,
-body[data-theme="modern"] .btn-pager-num {
+body[data-theme="modern"] .btn-pager-num,
+body[data-theme="modern"] .catalog-header-bar,
+body[data-theme="modern"] .catalog-sort-select,
+body[data-theme="modern"] .cat-order-pill,
+body[data-theme="modern"] .btn-order-move,
+body[data-theme="modern"] .drag-handle,
+body[data-theme="modern"] .preview-toolbar,
+body[data-theme="modern"] .thermal-paper-slip {
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   transition: transform 0.1s ease, border-color 0.15s ease, background-color 0.15s ease;
@@ -335,8 +378,23 @@ body[data-theme="modern"] .btn-quick-stock:active,
 body[data-theme="modern"] .btn-barcode-scan:active,
 body[data-theme="modern"] .btn-cart-qty:active,
 body[data-theme="modern"] .btn-pager-num:active,
+body[data-theme="modern"] .btn-order-move:active:not(:disabled),
+body[data-theme="modern"] .btn-customer-display:active,
 body[data-theme="modern"] .quick-card:active:not(.out-of-stock):not(.unavailable) {
   transform: scale(0.96);
+}
+
+body[data-theme="modern"] .drop-target-above td {
+  border-top: 2px solid #4f46e5 !important;
+}
+
+body[data-theme="modern"] .drop-target-below td {
+  border-bottom: 2px solid #4f46e5 !important;
+}
+
+body[data-theme="modern"] .is-dragging {
+  background: #eef2ff !important;
+  opacity: 0.45 !important;
 }
 
 /* -------------------------------------------------------------
@@ -593,7 +651,7 @@ body {
 }
 
 /* -------------------------------------------------------------
-   TOP BAR & CASHIER STATUS
+   TOP BAR, DUAL MONITOR & CASHIER STATUS
 ------------------------------------------------------------- */
 .topbar {
   height: 46px;
@@ -762,6 +820,17 @@ body {
   font-weight: 600;
 }
 
+.btn-customer-display {
+  background: #0284c7;
+  color: #ffffff;
+  border-color: #0369a1;
+  font-weight: 700;
+}
+
+.btn-customer-display:hover {
+  background: #0369a1;
+}
+
 .btn-admin {
   background: #fef3c7;
   color: #92400e;
@@ -850,14 +919,76 @@ body {
   max-width: 100%;
 }
 
-/* 2. PRODUCT CATALOG GRID & QUICK MENU TRAY */
+/* 2. PRODUCT CATALOG PANEL, SORTING BAR & GRID */
 .catalog-panel {
   padding: 8px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   background: var(--bg-app);
-  gap: 8px;
+  gap: 6px;
+}
+
+.catalog-header-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-card);
+  border: var(--border);
+  border-radius: var(--radius);
+  padding: 4px 10px;
+  flex-shrink: 0;
+}
+
+.catalog-header-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.catalog-category-title {
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: 0.2px;
+}
+
+.catalog-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.catalog-sort-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.catalog-sort-select {
+  padding: 3px 6px !important;
+  font-size: 0.72rem !important;
+  width: auto !important;
+  min-width: 140px;
+  background: var(--bg-alt);
+  border: var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  outline: none;
+}
+
+.empty-catalog-message {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 30px;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+  background: var(--bg-card);
+  border: var(--border);
+  border-radius: var(--radius);
 }
 
 .product-grid {
@@ -1160,6 +1291,12 @@ body {
 
 .ticket-header h3 {
   font-size: 0.9rem;
+}
+
+.ticket-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .btn-danger-outline {
@@ -1510,6 +1647,101 @@ body[data-theme="basic"] .btn-cart-qty:hover {
 }
 
 /* -------------------------------------------------------------
+   ADMIN CATEGORY MANUAL RE-ORDERING & DRAG-AND-DROP CONTROLS
+------------------------------------------------------------- */
+.drag-handle-header {
+  width: 36px;
+  color: var(--text-muted);
+}
+
+.drag-handle-cell {
+  width: 36px;
+  padding: 4px 6px !important;
+}
+
+.drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  color: var(--text-muted);
+  cursor: grab;
+  touch-action: none;
+  padding: 2px 6px;
+  border: 1px dashed var(--border);
+  background: var(--bg-alt);
+  line-height: 1;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+  background: #e0e7ff;
+  color: #4338ca;
+  border-color: #6366f1;
+}
+
+.drag-handle-disabled {
+  font-size: 0.8rem;
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.cat-row-draggable {
+  transition: background-color 0.15s ease;
+}
+
+.cat-order-btn-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cat-order-pill {
+  font-size: 0.72rem;
+  font-weight: 800;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  padding: 2px 6px;
+  min-width: 32px;
+  text-align: center;
+  color: var(--text);
+}
+
+.cat-order-fixed {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.btn-order-move {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.65rem;
+  font-weight: bold;
+  background: var(--bg-card);
+  border: var(--border);
+  color: var(--text);
+  cursor: pointer;
+  outline: none;
+}
+
+.btn-order-move:hover:not(:disabled) {
+  background: #e0e7ff;
+  border-color: #6366f1;
+  color: #4338ca;
+}
+
+.btn-order-move:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* -------------------------------------------------------------
    STAFF QR LOGIN BADGE MODAL & CARD PREVIEW
 ------------------------------------------------------------- */
 .modal-box-staff-badge {
@@ -1582,6 +1814,185 @@ body[data-theme="basic"] .btn-cart-qty:hover {
   overflow-y: auto;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+/* -------------------------------------------------------------
+   THERMAL PRINT PREVIEW MODAL & RECEIPT SIMULATION STYLES
+------------------------------------------------------------- */
+.modal-box-preview {
+  width: min(760px, 96vw) !important;
+  max-height: min(94vh, 94dvh);
+  background: var(--bg-card);
+  padding: 14px;
+}
+
+.preview-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-alt);
+  border: var(--border);
+  border-radius: var(--radius);
+  padding: 6px 12px;
+  margin: 4px 0 10px 0;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.preview-toolbar-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.preview-toolbar-item label {
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.preview-width-select {
+  padding: 4px 8px !important;
+  font-size: 0.78rem !important;
+  width: auto !important;
+  min-width: 160px;
+  background: var(--bg-card);
+  border: var(--border);
+}
+
+.preview-tip-text {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.thermal-preview-container {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  align-items: flex-start;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 10px 6px;
+  background: #334155;
+  border-radius: var(--radius);
+}
+
+.preview-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 260px;
+}
+
+.preview-column-header {
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: #e2e8f0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.thermal-paper-wrap {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+.thermal-paper-slip {
+  background: #ffffff !important;
+  color: #000000 !important;
+  font-family: "Courier New", Courier, monospace !important;
+  font-size: 0.75rem;
+  line-height: 1.25;
+  padding: 14px 12px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  border: 1px solid #cbd5e1;
+  position: relative;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.thermal-paper-58mm {
+  width: 290px;
+  max-width: 100%;
+}
+
+.thermal-paper-80mm {
+  width: 380px;
+  max-width: 100%;
+}
+
+.receipt-sample-tag {
+  text-align: center;
+  font-weight: 900;
+  font-size: 0.7rem;
+  color: #dc2626;
+  margin-bottom: 4px;
+}
+
+.receipt-center {
+  text-align: center;
+}
+
+.receipt-right {
+  text-align: right;
+}
+
+.receipt-dbl-height {
+  font-size: 1.15em;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+}
+
+.receipt-pager-box {
+  border: 2px dashed #000000;
+  padding: 4px 6px;
+  margin: 4px 0;
+  background: #f8fafc;
+}
+
+.receipt-divider {
+  overflow: hidden;
+  line-height: 0.9;
+  letter-spacing: -0.5px;
+  user-select: none;
+}
+
+.receipt-items-pre {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  margin: 0;
+  white-space: pre;
+}
+
+.receipt-bold-items {
+  font-weight: 900;
+}
+
+.receipt-total-line {
+  font-size: 1.05em;
+  padding-top: 2px;
+}
+
+.receipt-logo-img {
+  max-width: 110px;
+  max-height: 50px;
+  object-fit: contain;
+  margin: 0 auto 4px auto;
+  display: block;
+  filter: grayscale(100%) contrast(150%);
+}
+
+.receipt-cut-line {
+  text-align: center;
+  font-size: 0.65rem;
+  color: #64748b;
+  margin-top: 10px;
+  padding-top: 4px;
+  border-top: 1px dashed #cbd5e1;
 }
 
 /* -------------------------------------------------------------
@@ -2131,7 +2542,21 @@ body[data-theme="basic"] .btn-cart-qty:hover {
 
   .catalog-panel {
     padding: 5px;
-    gap: 5px;
+    gap: 4px;
+  }
+
+  .catalog-header-bar {
+    padding: 2px 6px;
+  }
+
+  .catalog-category-title {
+    font-size: 0.72rem;
+  }
+
+  .catalog-sort-select {
+    padding: 2px 4px !important;
+    font-size: 0.68rem !important;
+    min-width: 110px;
   }
 
   .product-grid {
@@ -2269,6 +2694,11 @@ body[data-theme="basic"] .btn-cart-qty:hover {
     padding: 3px 0;
     font-size: 0.72rem;
   }
+
+  .thermal-preview-container {
+    flex-direction: column;
+    max-height: 48vh;
+  }
 }
 
 /* 2. Phone Portrait Displays (width <= 640px) */
@@ -2293,6 +2723,21 @@ body[data-theme="basic"] .btn-cart-qty:hover {
 
   .workspace {
     grid-template-columns: 68px 1fr 220px;
+  }
+
+  .catalog-header-bar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .catalog-sort-select {
+    width: 100% !important;
+  }
+
+  .thermal-preview-container {
+    flex-direction: column;
+    align-items: center;
   }
 }
 
@@ -2334,4 +2779,4 @@ body[data-theme="basic"] .btn-cart-qty:hover {
   }
 }
 
-/* REMARK: STYLE_CSS_PAGER_GRID_STYLING_COMPLETE */
+/* REMARK: STYLE_CSS_PRINT_PREVIEW_AND_DUAL_MONITOR_COMPLETE */

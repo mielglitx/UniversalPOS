@@ -2,9 +2,10 @@
   Module Description: Standalone POS Register Primary HTML Markup
   Defines the structure for the full-screen terminal login lock,
   multi-tab administrative back-office portal, 3-column cashier register,
-  and modal dialogues. Includes configuration controls for customer calling
-  buzzers/pagers, dynamic checkout buzzer grids, and cloud backend
-  configuration generator triggers (Google Apps Script & Firebase).
+  and modal dialogues. Includes front-page catalog sorting selectors (Name,
+  Price, Date Created), automated and drag-and-drop category reordering table
+  headers, customer buzzer/pager controls, dual-monitor customer display
+  launch triggers, and ESC/POS thermal receipt print preview modal.
 -->
 <!DOCTYPE html>
 <html lang="en">
@@ -265,21 +266,29 @@
         </div>
       </section>
 
-      <!-- Tab 4: Category Management -->
+      <!-- Tab 4: Category Management with Auto, Manual and Drag & Drop Sorting -->
       <section class="admin-tab-pane" id="pane-categories">
         <div class="admin-table-controls">
-          <h3>Product Categories</h3>
-          <button type="button" class="btn-pay btn-cash" id="btn-add-new-category">+ Add New Category</button>
+          <div>
+            <h3>Product Categories</h3>
+            <p class="printer-hint-text">Drag handle (⠿) or use arrows to re-order categories. Changes save automatically.</p>
+          </div>
+          <div class="admin-actions-group">
+            <button type="button" class="btn-tool" id="btn-auto-sort-categories" title="Sort all categories alphabetically (A-Z)">🔤 Auto-Sort (A–Z)</button>
+            <button type="button" class="btn-tool" id="btn-normalize-category-orders" title="Clean and re-index orders to 1..N">🔢 Clean Index (1..N)</button>
+            <button type="button" class="btn-pay btn-cash" id="btn-add-new-category">+ Add New Category</button>
+          </div>
         </div>
 
         <div class="admin-table-wrap">
           <table class="admin-data-table">
             <thead>
               <tr>
+                <th class="drag-handle-header text-center">⠿</th>
                 <th>Icon</th>
                 <th>Category Name</th>
                 <th>Slug / ID</th>
-                <th>Display Order</th>
+                <th>Display Order (Priority)</th>
                 <th>Type</th>
                 <th class="text-center">Actions</th>
               </tr>
@@ -508,6 +517,7 @@
           <button type="button" class="btn-theme" data-mode="basic" id="btn-theme-basic">Basic</button>
           <button type="button" class="btn-theme active" data-mode="modern" id="btn-theme-modern">Modern</button>
         </div>
+        <button type="button" class="btn-tool btn-customer-display" id="btn-customer-display" title="Open Customer Order Display on 2nd Monitor">🖥️ Display</button>
         <button type="button" class="btn-tool btn-admin hidden" id="btn-open-admin">⚙️ Admin</button>
         <button type="button" class="btn-tool" id="btn-printer-dialog">🖨️ Printers</button>
         <button type="button" class="btn-tool" id="btn-kick-drawer">Drawer</button>
@@ -521,8 +531,28 @@
       <!-- 1. Left Category Sidebar (Square Cards with Images) -->
       <aside class="category-sidebar" id="category-tabs"></aside>
 
-      <!-- 2. Center Catalog Panel (Product Grid & Quick Menu Shelf) -->
+      <!-- 2. Center Catalog Panel (Product Grid, Sorting Header & Quick Menu Shelf) -->
       <section class="catalog-panel">
+        
+        <!-- Front-Page Catalog Sorting & Active Category Header Bar -->
+        <div class="catalog-header-bar">
+          <div class="catalog-header-left">
+            <span id="catalog-active-category-title" class="catalog-category-title">All Items</span>
+          </div>
+          <div class="catalog-header-right">
+            <label for="catalog-sort-select" class="catalog-sort-label">Sort:</label>
+            <select id="catalog-sort-select" class="form-select catalog-sort-select" title="Sort Catalog Products">
+              <option value="default">Default (Order Added)</option>
+              <option value="name-asc">Name (A → Z)</option>
+              <option value="name-desc">Name (Z → A)</option>
+              <option value="price-asc">Price (Low → High)</option>
+              <option value="price-desc">Price (High → Low)</option>
+              <option value="date-desc">Date (Newest First)</option>
+              <option value="date-asc">Date (Oldest First)</option>
+            </select>
+          </div>
+        </div>
+
         <div class="product-grid" id="product-grid"></div>
 
         <!-- Quick Menu Shelf for Addons -->
@@ -542,7 +572,10 @@
             <h3>Current Ticket</h3>
             <small id="ticket-id">#ORD-0001</small>
           </div>
-          <button type="button" class="btn-danger-outline" id="btn-clear-cart">Clear All</button>
+          <div class="ticket-header-actions">
+            <button type="button" class="btn-tool btn-sm" id="btn-preview-ticket" title="Preview Simulated Thermal Receipts">👁️ Preview</button>
+            <button type="button" class="btn-danger-outline" id="btn-clear-cart">Clear All</button>
+          </div>
         </div>
 
         <div class="ticket-scroll">
@@ -1196,7 +1229,62 @@
     </div>
   </dialog>
 
+  <!-- MODAL 14: Thermal Dual-Slip Print Preview (Customer Receipt & Server Slip) -->
+  <dialog class="pos-modal" id="modal-print-preview">
+    <div class="modal-box modal-box-preview">
+      <div class="printer-modal-header">
+        <div>
+          <h3>🖨️ Thermal Receipt Print Preview</h3>
+          <p class="printer-hint-text">Monospace simulation of Customer and Server slips before physical dispatch.</p>
+        </div>
+        <button type="button" class="btn-tool btn-danger-outline btn-sm" id="btn-close-preview-x">✖</button>
+      </div>
+
+      <!-- Preview Toolbar -->
+      <div class="preview-toolbar">
+        <div class="preview-toolbar-item">
+          <label for="preview-width-select">Simulated Paper Width:</label>
+          <select id="preview-width-select" class="form-select preview-width-select">
+            <option value="58mm">58mm (32 Columns Standard)</option>
+            <option value="80mm">80mm (48 Columns Wide)</option>
+          </select>
+        </div>
+        <span class="preview-tip-text">Matches ESC/POS physical output</span>
+      </div>
+
+      <!-- Dual Slip Monospace Simulation Containers -->
+      <div class="thermal-preview-container">
+        
+        <!-- Left Slip: Customer Copy -->
+        <div class="preview-column">
+          <div class="preview-column-header">
+            <span>Customer Copy (Official Receipt)</span>
+          </div>
+          <div class="thermal-paper-wrap">
+            <div id="preview-customer-receipt" class="thermal-paper-slip thermal-paper-58mm"></div>
+          </div>
+        </div>
+
+        <!-- Right Slip: Server Preparation Slip -->
+        <div class="preview-column">
+          <div class="preview-column-header">
+            <span>Server Copy (Kitchen / Preparation)</span>
+          </div>
+          <div class="thermal-paper-wrap">
+            <div id="preview-server-slip" class="thermal-paper-slip thermal-paper-58mm"></div>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="modal-actions modal-actions-mt">
+        <button type="button" class="btn-tool" id="btn-close-preview">Close Preview</button>
+        <button type="button" class="btn-pay btn-cash" id="btn-print-from-preview">🖨️ Test Print Both</button>
+      </div>
+    </div>
+  </dialog>
+
   <script type="module" src="js/main.js"></script>
 </body>
 </html>
-<!-- REMARK: INDEX_HTML_SYNC_CONFIG_BTN_COMPLETE -->
+<!-- REMARK: INDEX_HTML_PRINT_PREVIEW_AND_DUAL_MONITOR_COMPLETE -->

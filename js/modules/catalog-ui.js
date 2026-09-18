@@ -1,7 +1,8 @@
 /**
  * Module Description: Product Catalog & Category Workspace Controller
- * Manages category tab navigation, square product card rendering with real-time stock
- * warnings (low stock alerts and out-of-stock overlays), quick-access add-on tray shelf,
+ * Manages category tab navigation, square product card rendering with multi-criteria
+ * sorting (Name A-Z/Z-A, Price Low/High, Date Created Newest/Oldest), real-time stock
+ * warnings (low stock alerts and out-of-stock overlays), quick-access add-on shelf,
  * hardware barcode scanning input, and reactive cart additions.
  */
 
@@ -14,20 +15,33 @@ const FALLBACK_IMG = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53
 
 export const CatalogUI = {
   currentCategory: "all",
+  currentSort: localStorage.getItem("pos_catalog_sort") || "default",
   elements: {},
   initialized: false,
 
   /**
-   * Initializes DOM bindings, scanner listeners, and inventory event subscriptions
+   * Initializes DOM bindings, sort selector events, scanner listeners, and inventory subscriptions
    */
   init() {
     this.elements = {
       categoryTabs: document.getElementById("category-tabs"),
       productGrid: document.getElementById("product-grid"),
       barcodeInput: document.getElementById("barcode-input"),
+      catalogSortSelect: document.getElementById("catalog-sort-select"),
+      catalogActiveCategoryTitle: document.getElementById("catalog-active-category-title"),
       quickMenuContainer: document.getElementById("quick-menu-container"),
       quickMenuScroll: document.getElementById("quick-menu-scroll")
     };
+
+    // Initialize sort dropdown selection from persistent local storage
+    if (this.elements.catalogSortSelect) {
+      this.elements.catalogSortSelect.value = this.currentSort;
+      this.elements.catalogSortSelect.onchange = async () => {
+        this.currentSort = this.elements.catalogSortSelect.value || "default";
+        localStorage.setItem("pos_catalog_sort", this.currentSort);
+        await this.loadProducts(this.currentCategory);
+      };
+    }
 
     // Category sidebar delegation
     if (this.elements.categoryTabs) {
@@ -161,7 +175,7 @@ export const CatalogUI = {
 
     const categories = await DB.getCategories();
     this.elements.categoryTabs.innerHTML = categories.map((cat) => `
-      <button class="cat-pill ${cat.id === this.currentCategory ? "active" : ""}" data-cat="${cat.id}">
+      <button type="button" class="cat-pill ${cat.id === this.currentCategory ? "active" : ""}" data-cat="${cat.id}">
         <div class="cat-img-wrap">
           <img 
             src="${cat.image || FALLBACK_IMG}" 
@@ -176,17 +190,72 @@ export const CatalogUI = {
   },
 
   /**
-   * Loads products filtered by category and applies visual inventory warnings
+   * Sorts product array in memory based on current active sort setting
+   * @param {Array<Object>} products
+   * @returns {Array<Object>}
+   */
+  applyProductSorting(products) {
+    if (!Array.isArray(products) || products.length <= 1) return products;
+
+    return [...products].sort((a, b) => {
+      switch (this.currentSort) {
+        case "name-asc":
+          return (a.name || "").localeCompare(b.name || "", undefined, { numeric: true, sensitivity: "base" });
+        case "name-desc":
+          return (b.name || "").localeCompare(a.name || "", undefined, { numeric: true, sensitivity: "base" });
+        case "price-asc":
+          return (Number(a.price) || 0) - (Number(b.price) || 0);
+        case "price-desc":
+          return (Number(b.price) || 0) - (Number(a.price) || 0);
+        case "date-desc": {
+          const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return tB - tA;
+        }
+        case "date-asc": {
+          const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return tA - tB;
+        }
+        case "default":
+        default:
+          return 0; // Natural IndexedDB sequence
+      }
+    });
+  },
+
+  /**
+   * Loads products filtered by category, applies sorting, and renders cards with stock warnings
    * @param {string} categoryId
    */
   async loadProducts(categoryId = "all") {
     if (!this.elements.productGrid) return;
 
     this.currentCategory = categoryId;
-    const products = await DB.getProducts(categoryId);
+    const rawProducts = await DB.getProducts(categoryId);
+    const sortedProducts = this.applyProductSorting(rawProducts);
     const generalThreshold = parseInt(localStorage.getItem("pos_general_low_stock_threshold") || "5", 10);
 
-    this.elements.productGrid.innerHTML = products.map((prod) => {
+    // Update active category title in workspace header bar
+    if (this.elements.catalogActiveCategoryTitle) {
+      if (categoryId === "all") {
+        this.elements.catalogActiveCategoryTitle.textContent = "All Items";
+      } else {
+        const catObj = await DB.getCategoryById(categoryId);
+        this.elements.catalogActiveCategoryTitle.textContent = catObj ? catObj.name : "Products";
+      }
+    }
+
+    if (sortedProducts.length === 0) {
+      this.elements.productGrid.innerHTML = `
+        <div class="empty-catalog-message">
+          <span>No products found in this category.</span>
+        </div>
+      `;
+      return;
+    }
+
+    this.elements.productGrid.innerHTML = sortedProducts.map((prod) => {
       const isMon = Boolean(prod.isMonitored);
       let badgeHtml = "";
       let overlayHtml = "";
@@ -309,4 +378,4 @@ export const CatalogUI = {
   }
 };
 
-// REMARK: CATALOG_UI_JS_MODULARIZATION_COMPLETE
+// REMARK: CATALOG_UI_JS_SORTING_COMPLETE

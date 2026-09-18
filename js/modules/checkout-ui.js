@@ -1,9 +1,10 @@
 /**
- * Module Description: Checkout & Payment Processing UI Controller
+ * Module Description: Checkout, Print Preview & Payment Processing UI Controller
  * Orchestrates cash payment confirmation with quick tender presets and change computation,
  * dynamic GCash QR Ph generation, customer reference number verification, dynamic customer
- * calling buzzer/pager N-grid selection, order persistence in IndexedDB, dual-printer
- * physical receipt dispatching, cash drawer firing, and background cloud synchronization.
+ * calling buzzer/pager N-grid selection, dual-screen live customer display window management
+ * with real-time broadcast synchronization, thermal print preview generation (58mm/80mm),
+ * order persistence in IndexedDB, and dual-printer hardware dispatching.
  */
 
 import { DB } from "./db.js";
@@ -18,6 +19,8 @@ export const CheckoutUI = {
   elements: {},
   currentBill: null,
   selectedPagerNumber: null,
+  customerDisplayWindow: null,
+  previewPaperWidth: "58mm",
   initialized: false,
 
   /**
@@ -27,6 +30,8 @@ export const CheckoutUI = {
     this.elements = {
       btnPayCash: document.getElementById("btn-pay-cash"),
       btnPayGCash: document.getElementById("btn-pay-gcash"),
+      btnCustomerDisplay: document.getElementById("btn-customer-display"),
+      btnPreviewTicket: document.getElementById("btn-preview-ticket"),
 
       // Dynamic GCash QR Modal Elements
       modalGCash: document.getElementById("modal-gcash"),
@@ -60,10 +65,64 @@ export const CheckoutUI = {
       btnFinalizeGCash: document.getElementById("btn-finalize-gcash"),
       gcashPagerContainer: document.getElementById("gcash-pager-container"),
       gcashPagerGrid: document.getElementById("gcash-pager-grid"),
-      gcashPagerSelectedLabel: document.getElementById("gcash-pager-selected-label")
+      gcashPagerSelectedLabel: document.getElementById("gcash-pager-selected-label"),
+
+      // Thermal Print Preview Modal Elements
+      modalPrintPreview: document.getElementById("modal-print-preview"),
+      previewCustomerReceipt: document.getElementById("preview-customer-receipt"),
+      previewServerSlip: document.getElementById("preview-server-slip"),
+      previewWidthSelect: document.getElementById("preview-width-select"),
+      btnClosePreview: document.getElementById("btn-close-preview"),
+      btnClosePreviewX: document.getElementById("btn-close-preview-x"),
+      btnPrintFromPreview: document.getElementById("btn-print-from-preview")
     };
 
-    // 1. Cash Payment Workflow
+    // 1. Dual Monitor Customer Display Launcher
+    if (this.elements.btnCustomerDisplay) {
+      this.elements.btnCustomerDisplay.onclick = () => this.openCustomerDisplay();
+    }
+
+    // 2. Thermal Print Preview Workflow
+    if (this.elements.btnPreviewTicket) {
+      this.elements.btnPreviewTicket.onclick = () => this.openPrintPreview();
+    }
+
+    if (this.elements.btnClosePreview) {
+      this.elements.btnClosePreview.onclick = () => this.closePrintPreview();
+    }
+
+    if (this.elements.btnClosePreviewX) {
+      this.elements.btnClosePreviewX.onclick = () => this.closePrintPreview();
+    }
+
+    if (this.elements.previewWidthSelect) {
+      this.elements.previewWidthSelect.onchange = () => {
+        this.previewPaperWidth = this.elements.previewWidthSelect.value || "58mm";
+        this.renderPrintPreview(this.previewPaperWidth);
+      };
+    }
+
+    if (this.elements.btnPrintFromPreview) {
+      this.elements.btnPrintFromPreview.onclick = async () => {
+        const bill = Cart.items.length > 0 ? Cart.calculate() : null;
+        if (!bill || bill.items.length === 0) {
+          alert("Cart is empty. Please add items to ticket to print physically.");
+          return;
+        }
+        const activeCashier = Session.get() || { id: "STAFF-01", name: "Cashier" };
+        const enabledPrinters = await DB.getEnabledPrinters();
+        await Printer.broadcastReceipt(enabledPrinters, {
+          ...bill,
+          orderNumber: `PREV-${Date.now().toString().slice(-4)}`,
+          cashierName: activeCashier.name,
+          paymentType: "TEST PRINT",
+          pagerNumber: this.selectedPagerNumber || "01"
+        });
+        alert("Preview receipt sent to paired printers.");
+      };
+    }
+
+    // 3. Cash Payment Workflow
     if (this.elements.btnPayCash) {
       this.elements.btnPayCash.onclick = () => this.openCashConfirmationModal();
     }
@@ -99,7 +158,7 @@ export const CheckoutUI = {
       this.elements.btnFinalizeCash.onclick = () => this.handleCashFinalize();
     }
 
-    // 2. GCash QR Code Workflow
+    // 4. GCash QR Code Workflow
     if (this.elements.btnPayGCash) {
       this.elements.btnPayGCash.onclick = () => this.openGCashModal();
     }
@@ -112,7 +171,7 @@ export const CheckoutUI = {
       this.elements.btnConfirmGCash.onclick = () => this.openGCashVerificationModal();
     }
 
-    // 3. GCash Verification Workflow
+    // 5. GCash Verification Workflow
     if (this.elements.btnCancelGCashConfirmX) {
       this.elements.btnCancelGCashConfirmX.onclick = () => this.closeGCashVerificationModal();
     }
@@ -165,6 +224,236 @@ export const CheckoutUI = {
   },
 
   /**
+   * Opens the standalone customer-facing display in a separate browser window for dual monitors
+   */
+  async openCustomerDisplay() {
+    if (this.customerDisplayWindow && !this.customerDisplayWindow.closed) {
+      this.customerDisplayWindow.focus();
+      return;
+    }
+
+    const w = 1024;
+    const h = 768;
+    const left = window.screen.availLeft + (window.screen.availWidth || 1920);
+    const top = 50;
+
+    this.customerDisplayWindow = window.open(
+      "customer-display.html",
+      "CustomerDisplayWindow",
+      `width=${w},height=${h},left=${left},top=${top},menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes`
+    );
+
+    // Broadcast current store branding and ticket calculations to the newly opened screen
+    const store = await DB.getStoreSettings();
+    setTimeout(() => {
+      Cart.broadcastToCustomer({
+        type: "store:updated",
+        data: store
+      });
+      Cart.notify();
+    }, 600);
+  },
+
+  // ===========================================================================
+  // 1. THERMAL PRINT PREVIEW MODAL WORKFLOW
+  // ===========================================================================
+
+  async openPrintPreview() {
+    if (!this.elements.modalPrintPreview) return;
+
+    if (this.elements.previewWidthSelect) {
+      this.previewPaperWidth = this.elements.previewWidthSelect.value || "58mm";
+    }
+
+    await this.renderPrintPreview(this.previewPaperWidth);
+
+    if (typeof this.elements.modalPrintPreview.showModal === "function") {
+      this.elements.modalPrintPreview.showModal();
+    }
+  },
+
+  closePrintPreview() {
+    if (this.elements.modalPrintPreview && this.elements.modalPrintPreview.open) {
+      this.elements.modalPrintPreview.close();
+    }
+  },
+
+  /**
+   * Formats and displays both customer receipt and server slip inside the preview dialog
+   * @param {string} paperWidth - '58mm' or '80mm'
+   */
+  async renderPrintPreview(paperWidth = "58mm") {
+    if (!this.elements.previewCustomerReceipt || !this.elements.previewServerSlip) return;
+
+    const is80mm = paperWidth === "80mm";
+    const store = await DB.getStoreSettings();
+    const activeCashier = Session.get() || { id: "STAFF-01", name: "Cashier" };
+
+    // Use current ticket if populated; otherwise show realistic sample order
+    let ticket = Cart.items.length > 0 ? Cart.calculate() : null;
+    let isSample = false;
+
+    if (!ticket || ticket.items.length === 0) {
+      isSample = true;
+      ticket = {
+        orderNumber: "ORD-984210",
+        cashierName: activeCashier.name || "Cashier",
+        timestamp: new Date().toISOString(),
+        items: [
+          { name: "Caramel Macchiato", qty: 2, price: 130.0 },
+          { name: "Pork Sisig Rice", qty: 1, price: 165.0 },
+          { name: "Choco Crinkles", qty: 3, price: 75.0 }
+        ],
+        vatableSales: 580.36,
+        vatAmount: 69.64,
+        total: 650.0,
+        paymentType: "CASH",
+        amountTendered: 1000.0,
+        changeAmount: 350.0,
+        pagerNumber: this.selectedPagerNumber || "07"
+      };
+    } else {
+      ticket = {
+        ...ticket,
+        orderNumber: `ORD-${Date.now().toString().slice(-6)}`,
+        cashierName: activeCashier.name,
+        paymentType: "CASH",
+        amountTendered: this.elements.cashTenderedInput ? parseFloat(this.elements.cashTenderedInput.value) || ticket.total : ticket.total,
+        changeAmount: this.elements.cashTenderedInput ? Math.max(0, (parseFloat(this.elements.cashTenderedInput.value) || 0) - ticket.total) : 0,
+        pagerNumber: this.selectedPagerNumber || (store.useNumberPager ? "01" : null)
+      };
+    }
+
+    // Set paper width container class
+    const containerWidthClass = is80mm ? "thermal-paper-80mm" : "thermal-paper-58mm";
+    this.elements.previewCustomerReceipt.className = `thermal-paper-slip ${containerWidthClass}`;
+    this.elements.previewServerSlip.className = `thermal-paper-slip ${containerWidthClass}`;
+
+    // Generate HTML formatted slips
+    this.elements.previewCustomerReceipt.innerHTML = this.formatCustomerReceiptHtml(ticket, store, is80mm, isSample);
+    this.elements.previewServerSlip.innerHTML = this.formatServerSlipHtml(ticket, is80mm, isSample);
+  },
+
+  /**
+   * Builds customer receipt HTML simulating monospace columns and double-height fonts
+   */
+  formatCustomerReceiptHtml(ticket, store, is80mm, isSample) {
+    const totalCols = is80mm ? 48 : 32;
+    const divider = "-".repeat(totalCols);
+    const dblDivider = "=".repeat(totalCols);
+
+    const padRow = (name, qty, total) => {
+      const nMax = is80mm ? 24 : 16;
+      const qMax = is80mm ? 7 : 4;
+      const tMax = is80mm ? 15 : 10;
+      const c1 = (name || "Item").padEnd(nMax, " ").slice(0, nMax);
+      const c2 = String(qty).padStart(qMax, " ").slice(0, qMax);
+      const c3 = String(total).padStart(tMax, " ").slice(0, tMax);
+      return `${c1} ${c2} ${c3}`;
+    };
+
+    let itemsHtml = "";
+    if (Array.isArray(ticket.items)) {
+      itemsHtml = ticket.items.map((i) => {
+        const lineTotal = `₱${((Number(i.price) || 0) * (i.qty || 1)).toFixed(2)}`;
+        return padRow(i.name, `${i.qty}x`, lineTotal);
+      }).join("\n");
+    }
+
+    const buzzerCallout = ticket.pagerNumber ? `
+<div class="receipt-divider">${divider}</div>
+<div class="receipt-center receipt-pager-box">
+  <span class="receipt-dbl-height">BUZZER #${ticket.pagerNumber}</span>
+</div>` : "";
+
+    const logoHtml = store.logoBase64
+      ? `<div class="receipt-center"><img src="${store.logoBase64}" class="receipt-logo-img" alt="Logo" /></div>`
+      : "";
+
+    return `
+${isSample ? '<div class="receipt-sample-tag">[ SAMPLE PREVIEW ]</div>' : ''}
+${logoHtml}
+<div class="receipt-center receipt-dbl-height"><b>${(store.storeName || "LOKALEX STORE").toUpperCase()}</b></div>
+${store.companyName ? `<div class="receipt-center">${store.companyName}</div>` : ''}
+${store.address ? `<div class="receipt-center">${store.address}</div>` : ''}
+${store.contactNumber ? `<div class="receipt-center">Tel: ${store.contactNumber}</div>` : ''}
+<div class="receipt-divider">${dblDivider}</div>
+<div class="receipt-center"><b>[ CUSTOMER OFFICIAL RECEIPT ]</b></div>
+<div>Date: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+<div>Order: ${ticket.orderNumber || "ORD-000000"}</div>
+<div>Cashier: ${ticket.cashierName || "Cashier"}</div>
+${buzzerCallout}
+<div class="receipt-divider">${divider}</div>
+<div>${padRow("ITEM", "QTY", "TOTAL")}</div>
+<div class="receipt-divider">${divider}</div>
+<pre class="receipt-items-pre">${itemsHtml}</pre>
+<div class="receipt-divider">${divider}</div>
+<div class="receipt-right">Vatable Sales: ₱${Number(ticket.vatableSales || 0).toFixed(2)}</div>
+<div class="receipt-right">VAT Amount (12%): ₱${Number(ticket.vatAmount || 0).toFixed(2)}</div>
+<div class="receipt-right receipt-total-line"><b>TOTAL AMOUNT: ₱${Number(ticket.total || 0).toFixed(2)}</b></div>
+<div class="receipt-right">Payment Mode: ${ticket.paymentType || "CASH"}</div>
+${ticket.amountTendered ? `<div class="receipt-right">Amount Tendered: ₱${Number(ticket.amountTendered).toFixed(2)}</div>` : ''}
+${ticket.changeAmount !== null && ticket.changeAmount !== undefined ? `<div class="receipt-right">Change: ₱${Number(ticket.changeAmount).toFixed(2)}</div>` : ''}
+<div class="receipt-divider">${dblDivider}</div>
+${store.tagline ? `<div class="receipt-center">"${store.tagline}"</div>` : ''}
+<div class="receipt-center">Thank you for your purchase!</div>
+<div class="receipt-center">Please visit us again.</div>
+<div class="receipt-cut-line">┈┈┈┈┈┈┈┈┈┈┈ [ CUT PAPER ] ┈┈┈┈┈┈┈┈┈┈┈</div>
+`;
+  },
+
+  /**
+   * Builds server order slip HTML
+   */
+  formatServerSlipHtml(ticket, is80mm, isSample) {
+    const totalCols = is80mm ? 48 : 32;
+    const divider = "-".repeat(totalCols);
+    const dblDivider = "=".repeat(totalCols);
+
+    let totalUnits = 0;
+    const padServerRow = (qtyStr, nameStr) => {
+      const qMax = is80mm ? 10 : 6;
+      const nMax = is80mm ? 38 : 26;
+      const c1 = qtyStr.padEnd(qMax, " ").slice(0, qMax);
+      const c2 = nameStr.padEnd(nMax, " ").slice(0, nMax);
+      return `${c1}${c2}`;
+    };
+
+    let itemsHtml = "";
+    if (Array.isArray(ticket.items)) {
+      itemsHtml = ticket.items.map((i) => {
+        const qty = i.qty || 1;
+        totalUnits += qty;
+        return padServerRow(`[ ${qty}x ]`, i.name || "Item");
+      }).join("\n");
+    }
+
+    const buzzerCallout = ticket.pagerNumber ? `
+<div class="receipt-divider">${divider}</div>
+<div class="receipt-center receipt-pager-box">
+  <span class="receipt-dbl-height">BUZZER #${ticket.pagerNumber}</span>
+</div>` : "";
+
+    return `
+${isSample ? '<div class="receipt-sample-tag">[ SAMPLE PREVIEW ]</div>' : ''}
+<div class="receipt-center receipt-dbl-height"><b>*** SERVER SLIP ***</b></div>
+<div class="receipt-center"><b>ORDER: ${ticket.orderNumber || "ORD-000000"}</b></div>
+${buzzerCallout}
+<div>Time: ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</div>
+<div>Server/Cashier: ${ticket.cashierName || "Cashier"}</div>
+<div class="receipt-divider">${dblDivider}</div>
+<div>${padServerRow("QTY", "ORDER DETAILS")}</div>
+<div class="receipt-divider">${divider}</div>
+<pre class="receipt-items-pre receipt-bold-items">${itemsHtml}</pre>
+<div class="receipt-divider">${divider}</div>
+<div class="receipt-center receipt-bold-items">TOTAL UNITS ORDERED: ${totalUnits}</div>
+<div class="receipt-divider">${dblDivider}</div>
+<div class="receipt-center">[ SERVER / PREPARATION COPY ]</div>
+<div class="receipt-cut-line">┈┈┈┈┈┈┈┈┈┈┈ [ CUT PAPER ] ┈┈┈┈┈┈┈┈┈┈┈</div>
+`;
+  },
+
+  /**
    * Dynamically renders N buzzer buttons based on administrative store capacity
    * @param {HTMLElement} containerEl
    * @param {HTMLElement} gridEl
@@ -205,12 +494,20 @@ export const CheckoutUI = {
           btn.classList.add("active");
           if (labelEl) labelEl.textContent = `#${val}`;
         }
+
+        // Mirror buzzer selection instantly to dual monitor
+        Cart.broadcastToCustomer({
+          type: "checkout:updated",
+          data: {
+            pagerNumber: this.selectedPagerNumber
+          }
+        });
       };
     });
   },
 
   // ===========================================================================
-  // 1. CASH CONFIRMATION & CHANGE CALCULATION
+  // 2. CASH CONFIRMATION & CHANGE CALCULATION
   // ===========================================================================
 
   async openCashConfirmationModal() {
@@ -250,6 +547,16 @@ export const CheckoutUI = {
       this.elements.cashPagerSelectedLabel
     );
 
+    // Mirror opening of cash checkout to customer display
+    Cart.broadcastToCustomer({
+      type: "checkout:updated",
+      data: {
+        pagerNumber: null,
+        tendered: null,
+        change: null
+      }
+    });
+
     if (this.elements.modalCashConfirm && typeof this.elements.modalCashConfirm.showModal === "function") {
       this.elements.modalCashConfirm.showModal();
       setTimeout(() => {
@@ -266,6 +573,12 @@ export const CheckoutUI = {
     }
     this.currentBill = null;
     this.selectedPagerNumber = null;
+
+    Cart.broadcastToCustomer({
+      type: "checkout:cleared",
+      data: {}
+    });
+    Cart.notify();
   },
 
   handleQuickCashClick(value) {
@@ -301,6 +614,16 @@ export const CheckoutUI = {
       this.elements.cashChangeAmount.textContent = "₱0.00";
       this.elements.cashChangeAmount.style.color = "#b91c1c";
     }
+
+    // Mirror live tendered cash and computed change to dual monitor
+    Cart.broadcastToCustomer({
+      type: "checkout:updated",
+      data: {
+        pagerNumber: this.selectedPagerNumber,
+        tendered: tendered > 0 ? tendered : null,
+        change: change >= 0 ? change : 0
+      }
+    });
   },
 
   async handleCashFinalize() {
@@ -358,12 +681,30 @@ export const CheckoutUI = {
       // 4. Actuate counter cash drawer
       await Printer.kickDrawer(enabledPrinters);
 
-      // 5. Reset ticket state and close modal
+      // 5. Mirror finalized change and buzzer details to customer display
+      Cart.broadcastToCustomer({
+        type: "checkout:updated",
+        data: {
+          pagerNumber,
+          tendered,
+          change: Math.max(0, change)
+        }
+      });
+
+      // 6. Reset ticket state and close modal
       Cart.clear();
       this.closeCashConfirmationModal();
       console.info(`[Checkout] Cash Order ${savedOrder.orderNumber} committed locally.`);
 
-      // 6. Opportunistic per-sale background push (fire-and-forget)
+      // Retain change and buzzer on customer display for 6 seconds before returning to welcome screen
+      setTimeout(() => {
+        Cart.broadcastToCustomer({
+          type: "checkout:cleared",
+          data: {}
+        });
+      }, 6000);
+
+      // 7. Opportunistic per-sale background push
       Sync.pushPendingOrders({ silent: true }).catch((syncErr) => {
         console.warn("[Checkout Sync] Background push queued for scheduler:", syncErr.message);
       });
@@ -376,7 +717,7 @@ export const CheckoutUI = {
   },
 
   // ===========================================================================
-  // 2. GCASH QR DISPLAY & REFERENCE/TIMESTAMP CONFIRMATION
+  // 3. GCASH QR DISPLAY & REFERENCE/TIMESTAMP CONFIRMATION
   // ===========================================================================
 
   openGCashModal() {
@@ -477,6 +818,12 @@ export const CheckoutUI = {
       this.elements.modalGCashConfirm.close();
     }
     this.selectedPagerNumber = null;
+
+    Cart.broadcastToCustomer({
+      type: "checkout:cleared",
+      data: {}
+    });
+    Cart.notify();
   },
 
   async handleGCashFinalize() {
@@ -554,13 +901,30 @@ export const CheckoutUI = {
         pagerNumber
       });
 
-      // 4. Reset ticket state and close modal
+      // 4. Mirror payment confirmation and pager number to customer display
+      Cart.broadcastToCustomer({
+        type: "checkout:updated",
+        data: {
+          pagerNumber,
+          tendered: amountPaid,
+          change: 0.0
+        }
+      });
+
+      // 5. Reset ticket state and close modal
       Cart.clear();
       this.closeGCashVerificationModal();
       this.currentBill = null;
       console.info(`[Checkout] GCash Order ${savedOrder.orderNumber} committed locally.`);
 
-      // 5. Opportunistic per-sale background push (fire-and-forget)
+      setTimeout(() => {
+        Cart.broadcastToCustomer({
+          type: "checkout:cleared",
+          data: {}
+        });
+      }, 6000);
+
+      // 6. Opportunistic per-sale background push
       Sync.pushPendingOrders({ silent: true }).catch((syncErr) => {
         console.warn("[Checkout Sync] Background push queued for scheduler:", syncErr.message);
       });
@@ -573,4 +937,4 @@ export const CheckoutUI = {
   }
 };
 
-// REMARK: CHECKOUT_UI_JS_PAGER_GRID_COMPLETE
+// REMARK: CHECKOUT_UI_JS_PREVIEW_AND_DUAL_MONITOR_COMPLETE

@@ -1,0 +1,582 @@
+<!--
+  Module Description: Second-Screen Customer-Facing Live Display
+  Provides a standalone, real-time mirrored order display for dual-monitor setups.
+  Synchronizes instantly with the cashier terminal via the BroadcastChannel API
+  ('pos_customer_display') with localStorage fallback. Displays active ticket
+  items, VAT breakdowns, large amount due callouts, buzzer/pager assignments,
+  change calculations, and store branding.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Customer Display - Standalone POS</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f172a;
+      color: #f8fafc;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Top Branding Bar */
+    .cd-header {
+      height: 70px;
+      background: #1e293b;
+      border-bottom: 2px solid #334155;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 30px;
+      flex-shrink: 0;
+    }
+
+    .cd-brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .cd-logo {
+      height: 48px;
+      max-width: 120px;
+      object-fit: contain;
+    }
+
+    .cd-store-title {
+      font-size: 1.4rem;
+      font-weight: 900;
+      letter-spacing: 0.5px;
+      color: #ffffff;
+    }
+
+    .cd-tagline {
+      font-size: 0.85rem;
+      color: #94a3b8;
+    }
+
+    .cd-time {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: #38bdf8;
+      font-family: "Courier New", Courier, monospace;
+    }
+
+    /* Main Two-Pane Split */
+    .cd-main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1.25fr 1fr;
+      overflow: hidden;
+    }
+
+    /* Left Pane: Items Scroll Table */
+    .cd-items-pane {
+      background: #0f172a;
+      border-right: 2px solid #334155;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .cd-items-header {
+      padding: 16px 24px;
+      background: #1e293b;
+      border-bottom: 1px solid #334155;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .cd-items-header h2 {
+      font-size: 1.15rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #cbd5e1;
+    }
+
+    .cd-item-count-badge {
+      background: #38bdf8;
+      color: #0f172a;
+      font-weight: 900;
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 0.85rem;
+    }
+
+    .cd-table-container {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px 20px;
+    }
+
+    .cd-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .cd-table th {
+      text-align: left;
+      padding: 12px 10px;
+      font-size: 0.85rem;
+      color: #94a3b8;
+      text-transform: uppercase;
+      border-bottom: 2px solid #334155;
+    }
+
+    .cd-table td {
+      padding: 14px 10px;
+      font-size: 1.15rem;
+      border-bottom: 1px solid #1e293b;
+      vertical-align: middle;
+    }
+
+    .cd-item-name {
+      font-weight: 700;
+      color: #f1f5f9;
+    }
+
+    .cd-item-qty {
+      font-weight: 800;
+      color: #38bdf8;
+      text-align: center;
+      width: 80px;
+    }
+
+    .cd-item-price {
+      text-align: right;
+      color: #94a3b8;
+      width: 110px;
+    }
+
+    .cd-item-total {
+      text-align: right;
+      font-weight: 800;
+      color: #ffffff;
+      width: 130px;
+    }
+
+    /* Idle / Empty Cart Splash */
+    .cd-empty-splash {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      color: #64748b;
+      text-align: center;
+      padding: 40px;
+    }
+
+    .cd-empty-icon {
+      font-size: 4rem;
+      opacity: 0.6;
+    }
+
+    .cd-empty-splash h3 {
+      font-size: 1.4rem;
+      font-weight: 800;
+      color: #cbd5e1;
+    }
+
+    .cd-empty-splash p {
+      font-size: 0.95rem;
+    }
+
+    /* Right Pane: Summary, Totals & Pager Card */
+    .cd-summary-pane {
+      background: #1e293b;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 28px;
+      gap: 20px;
+      overflow-y: auto;
+    }
+
+    /* Buzzer / Pager Banner */
+    .cd-pager-banner {
+      background: linear-gradient(135deg, #16a34a, #15803d);
+      border: 2px solid #22c55e;
+      border-radius: 12px;
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 4px 12px rgba(22, 163, 74, 0.35);
+      animation: pulseGlow 2.5s infinite ease-in-out;
+    }
+
+    @keyframes pulseGlow {
+      0% { box-shadow: 0 0 10px rgba(34, 197, 94, 0.2); }
+      50% { box-shadow: 0 0 20px rgba(34, 197, 94, 0.6); }
+      100% { box-shadow: 0 0 10px rgba(34, 197, 94, 0.2); }
+    }
+
+    .cd-pager-title {
+      font-size: 1.05rem;
+      font-weight: 800;
+      color: #ffffff;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .cd-pager-num {
+      font-size: 2.4rem;
+      font-weight: 900;
+      color: #ffffff;
+      letter-spacing: 2px;
+    }
+
+    /* Bill Breakdown Card */
+    .cd-bill-card {
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .cd-bill-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 1.1rem;
+      color: #94a3b8;
+    }
+
+    .cd-bill-row span:last-child {
+      font-weight: 700;
+      color: #e2e8f0;
+    }
+
+    .cd-total-box {
+      background: #0284c7;
+      border-radius: 12px;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      box-shadow: 0 4px 14px rgba(2, 132, 199, 0.4);
+    }
+
+    .cd-total-label {
+      font-size: 1.1rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #e0f2fe;
+    }
+
+    .cd-total-amount {
+      font-size: 3.5rem;
+      font-weight: 900;
+      color: #ffffff;
+      letter-spacing: 1px;
+      line-height: 1;
+    }
+
+    /* Payment Finalize Card (Tendered & Change) */
+    .cd-payment-card {
+      background: #14532d;
+      border: 2px solid #22c55e;
+      border-radius: 12px;
+      padding: 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .cd-payment-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 1.15rem;
+      color: #bbf7d0;
+    }
+
+    .cd-change-large {
+      font-size: 1.8rem;
+      font-weight: 900;
+      color: #ffffff;
+    }
+
+    /* Bottom Status Banner */
+    .cd-footer {
+      height: 40px;
+      background: #0f172a;
+      border-top: 1px solid #334155;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 30px;
+      font-size: 0.8rem;
+      color: #64748b;
+      flex-shrink: 0;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Header with Store Profile & Live Clock -->
+  <header class="cd-header">
+    <div class="cd-brand">
+      <img id="cd-logo" class="cd-logo hidden" src="" alt="Logo" />
+      <div>
+        <h1 id="cd-store-name" class="cd-store-title">LOKALEX STORE</h1>
+        <p id="cd-tagline" class="cd-tagline">Fast, Fresh & Local Delivery</p>
+      </div>
+    </div>
+    <div id="cd-clock" class="cd-time">00:00:00 AM</div>
+  </header>
+
+  <!-- Main Split Display -->
+  <main class="cd-main">
+    
+    <!-- Left Pane: Ordered Items Table -->
+    <section class="cd-items-pane">
+      <div class="cd-items-header">
+        <h2>Items in Order</h2>
+        <span id="cd-item-count" class="cd-item-count-badge">0 Items</span>
+      </div>
+
+      <div class="cd-table-container">
+        <!-- Live Table -->
+        <table id="cd-table" class="cd-table hidden">
+          <thead>
+            <tr>
+              <th>Item Name</th>
+              <th style="text-align: center;">Qty</th>
+              <th style="text-align: right;">Price</th>
+              <th style="text-align: right;">Total</th>
+            </tr>
+          </thead>
+          <tbody id="cd-tbody"></tbody>
+        </table>
+
+        <!-- Empty State Splash -->
+        <div id="cd-empty-splash" class="cd-empty-splash">
+          <div class="cd-empty-icon">🛒</div>
+          <h3>Welcome!</h3>
+          <p>Your order details will appear here as items are scanned.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Right Pane: Totals, Pager Number, and Tendered Details -->
+    <section class="cd-summary-pane">
+      
+      <!-- Pager / Calling Buzzer Card (Dynamic) -->
+      <div id="cd-pager-banner" class="cd-pager-banner hidden">
+        <div class="cd-pager-title">📢 Your Buzzer / Pager</div>
+        <div id="cd-pager-number" class="cd-pager-num">#00</div>
+      </div>
+
+      <!-- Financial Breakdown -->
+      <div class="cd-bill-card">
+        <div class="cd-bill-row">
+          <span>VATable Sales:</span>
+          <span id="cd-subtotal">₱0.00</span>
+        </div>
+        <div class="cd-bill-row">
+          <span>VAT (12%):</span>
+          <span id="cd-vat">₱0.00</span>
+        </div>
+      </div>
+
+      <!-- Total Amount Due Callout -->
+      <div class="cd-total-box">
+        <span class="cd-total-label">Total Amount Due</span>
+        <span id="cd-total" class="cd-total-amount">₱0.00</span>
+      </div>
+
+      <!-- Tendered & Change Card (Shown on Payment Finalize) -->
+      <div id="cd-payment-card" class="cd-payment-card hidden">
+        <div class="cd-payment-row">
+          <span>Payment Tendered:</span>
+          <b id="cd-tendered">₱0.00</b>
+        </div>
+        <div class="cd-payment-row">
+          <span>Change Due:</span>
+          <b id="cd-change" class="cd-change-large">₱0.00</b>
+        </div>
+      </div>
+
+    </section>
+  </main>
+
+  <!-- Bottom Footer Bar -->
+  <footer class="cd-footer">
+    <span>Customer Display Terminal • Live Mirror</span>
+    <span id="cd-status">Connected to Register</span>
+  </footer>
+
+  <script>
+    // 1. Live Digital Clock
+    function updateClock() {
+      const el = document.getElementById("cd-clock");
+      if (el) {
+        const now = new Date();
+        el.textContent = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      }
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    // 2. DOM Elements
+    const elements = {
+      storeName: document.getElementById("cd-store-name"),
+      tagline: document.getElementById("cd-tagline"),
+      logo: document.getElementById("cd-logo"),
+      tbody: document.getElementById("cd-tbody"),
+      table: document.getElementById("cd-table"),
+      emptySplash: document.getElementById("cd-empty-splash"),
+      itemCount: document.getElementById("cd-item-count"),
+      subtotal: document.getElementById("cd-subtotal"),
+      vat: document.getElementById("cd-vat"),
+      total: document.getElementById("cd-total"),
+      pagerBanner: document.getElementById("cd-pager-banner"),
+      pagerNumber: document.getElementById("cd-pager-number"),
+      paymentCard: document.getElementById("cd-payment-card"),
+      tendered: document.getElementById("cd-tendered"),
+      change: document.getElementById("cd-change"),
+      status: document.getElementById("cd-status")
+    };
+
+    // 3. Render Cart State
+    function renderCart(cartData) {
+      if (!cartData || !cartData.items || cartData.items.length === 0) {
+        elements.table.classList.add("hidden");
+        elements.emptySplash.classList.remove("hidden");
+        elements.itemCount.textContent = "0 Items";
+        elements.subtotal.textContent = "₱0.00";
+        elements.vat.textContent = "₱0.00";
+        elements.total.textContent = "₱0.00";
+        return;
+      }
+
+      elements.emptySplash.classList.add("hidden");
+      elements.table.classList.remove("hidden");
+
+      elements.itemCount.textContent = `${cartData.itemCount || cartData.items.length} Items`;
+      elements.subtotal.textContent = `₱${Number(cartData.vatableSales || 0).toFixed(2)}`;
+      elements.vat.textContent = `₱${Number(cartData.vatAmount || 0).toFixed(2)}`;
+      elements.total.textContent = `₱${Number(cartData.total || 0).toFixed(2)}`;
+
+      elements.tbody.innerHTML = cartData.items.map(item => `
+        <tr>
+          <td class="cd-item-name">${item.name || "Item"}</td>
+          <td class="cd-item-qty">${item.qty}x</td>
+          <td class="cd-item-price">₱${Number(item.price || 0).toFixed(2)}</td>
+          <td class="cd-item-total">₱${((Number(item.price) || 0) * (item.qty || 1)).toFixed(2)}</td>
+        </tr>
+      `).join("");
+    }
+
+    // 4. Render Payment / Checkout State
+    function renderCheckout(checkoutData) {
+      if (!checkoutData) return;
+
+      // Pager / Buzzer Banner
+      if (checkoutData.pagerNumber) {
+        elements.pagerBanner.classList.remove("hidden");
+        elements.pagerNumber.textContent = `#${checkoutData.pagerNumber}`;
+      } else {
+        elements.pagerBanner.classList.add("hidden");
+      }
+
+      // Tendered & Change Card
+      if (checkoutData.tendered !== undefined && checkoutData.tendered !== null) {
+        elements.paymentCard.classList.remove("hidden");
+        elements.tendered.textContent = `₱${Number(checkoutData.tendered).toFixed(2)}`;
+        elements.change.textContent = `₱${Number(checkoutData.change || 0).toFixed(2)}`;
+      } else {
+        elements.paymentCard.classList.add("hidden");
+      }
+    }
+
+    // 5. Connect to BroadcastChannel
+    if ("BroadcastChannel" in window) {
+      const channel = new BroadcastChannel("pos_customer_display");
+
+      channel.onmessage = (event) => {
+        const msg = event.data;
+        if (!msg || !msg.type) return;
+
+        if (msg.type === "cart:updated") {
+          renderCart(msg.data);
+          elements.paymentCard.classList.add("hidden");
+        } else if (msg.type === "checkout:updated") {
+          renderCheckout(msg.data);
+        } else if (msg.type === "checkout:cleared") {
+          elements.pagerBanner.classList.add("hidden");
+          elements.paymentCard.classList.add("hidden");
+          renderCart({ items: [] });
+        } else if (msg.type === "store:updated") {
+          if (msg.data.storeName) elements.storeName.textContent = msg.data.storeName;
+          if (msg.data.tagline) elements.tagline.textContent = msg.data.tagline;
+          if (msg.data.logoBase64) {
+            elements.logo.src = msg.data.logoBase64;
+            elements.logo.classList.remove("hidden");
+          }
+        }
+      };
+    }
+
+    // 6. localStorage Cross-Window Event Fallback
+    window.addEventListener("storage", (e) => {
+      if (e.key === "pos_customer_broadcast" && e.newValue) {
+        try {
+          const msg = JSON.parse(e.newValue);
+          if (msg.type === "cart:updated") {
+            renderCart(msg.data);
+          } else if (msg.type === "checkout:updated") {
+            renderCheckout(msg.data);
+          } else if (msg.type === "checkout:cleared") {
+            elements.pagerBanner.classList.add("hidden");
+            elements.paymentCard.classList.add("hidden");
+            renderCart({ items: [] });
+          }
+        } catch (err) {
+          console.warn("[Customer Display] Storage parse error:", err);
+        }
+      }
+    });
+
+    // 7. Initial Seed from localStorage
+    try {
+      const cachedStore = localStorage.getItem("pos_store_settings");
+      if (cachedStore) {
+        const s = JSON.parse(cachedStore);
+        if (s.storeName) elements.storeName.textContent = s.storeName;
+        if (s.tagline) elements.tagline.textContent = s.tagline;
+        if (s.logoBase64) {
+          elements.logo.src = s.logoBase64;
+          elements.logo.classList.remove("hidden");
+        }
+      }
+    } catch (e) {}
+  </script>
+</body>
+</html>
+<!-- REMARK: CUSTOMER_DISPLAY_HTML_COMPLETE -->
